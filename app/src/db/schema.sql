@@ -2,10 +2,10 @@
 -- Statements are separated by semicolons at line end; keep semicolons out of comments.
 
 DROP VIEW IF EXISTS balances;
-DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS audit_events;  -- removed table, dropped if an old database still has it
 DROP TABLE IF EXISTS expense_shares;
 DROP TABLE IF EXISTS expenses;
-DROP TABLE IF EXISTS utterances;
+DROP TABLE IF EXISTS utterances;    -- removed table, dropped if an old database still has it
 DROP TABLE IF EXISTS group_members;
 DROP TABLE IF EXISTS groups_;
 DROP TABLE IF EXISTS people;
@@ -35,7 +35,6 @@ CREATE TABLE group_members (
 
 CREATE TABLE expenses (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
-  utterance_id  BIGINT NULL,
   created_at    DATETIME(6) DEFAULT NOW(6),
   spent_on      DATE NOT NULL,
   amount        DECIMAL(10,2) NOT NULL,
@@ -66,26 +65,3 @@ CREATE VIEW balances AS
   SELECT s.person_id, p.name, SUM(s.paid - s.owed) AS net
   FROM expense_shares s JOIN people p ON p.id = s.person_id
   GROUP BY s.person_id, p.name;
-
--- ---------- Memory ----------
-
-CREATE TABLE utterances (
-  id          BIGINT AUTO_INCREMENT PRIMARY KEY,
-  session_id  VARCHAR(64),
-  created_at  DATETIME(6) DEFAULT NOW(6),
-  transcript  TEXT,
-  intent      VARCHAR(20)                    -- log | query | edit | settle | other
-);
-
-CREATE TABLE audit_events (
-  id            BIGINT AUTO_INCREMENT PRIMARY KEY,
-  utterance_id  BIGINT,
-  expense_id    BIGINT NULL,
-  step          VARCHAR(40),                 -- transcribe | route | extract | resolve | math | gate | store | balances | query
-  model         VARCHAR(80) NULL,
-  input         JSON,
-  output        JSON,
-  confidence    FLOAT NULL,
-  latency_ms    INT,
-  created_at    DATETIME(6) DEFAULT NOW(6)
-);

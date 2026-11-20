@@ -4,9 +4,8 @@ import { Orb } from './components/Orb'
 import { People } from './components/People'
 import { ReceiptCard } from './components/ReceiptCard'
 import { Progress } from './components/Trail'
-import { useMicLevel } from './hooks/useMicLevel'
-import { cents, fromCents, isoDay } from './lib/format'
-import { DEMO_RUN, HISTORY, PEOPLE } from './lib/sample'
+import { useRecorder } from './hooks/useRecorder'
+import * as api from './lib/api'
 import type { Activity, OrbState, Person, Receipt, TrailStep } from './lib/types'
 
 function greeting(name: string) {
@@ -17,18 +16,18 @@ function greeting(name: string) {
 
 export default function App() {
   const [orb, setOrb] = useState<OrbState>('idle')
-  const [people, setPeople] = useState<Person[]>(PEOPLE)
+  const [people, setPeople] = useState<Person[]>([])
   const [heard, setHeard] = useState('')
   const [reply, setReply] = useState('')
   const [steps, setSteps] = useState<TrailStep[]>([])
   const [running, setRunning] = useState(false)
-  const [history, setHistory] = useState<Activity[]>(HISTORY)
+  const [history, setHistory] = useState<Activity[]>([])
   const [receipt, setReceipt] = useState<Receipt | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [typed, setTyped] = useState('')
   const [splitWith, setSplitWith] = useState<string[]>([]) // who orbits the light after a split
 
-  const mic = useMicLevel()
+  const session = useRef(crypto.randomUUID()) // one conversation per page load, so follow-up answers land
   const timers = useRef<number[]>([])
   const later = (fn: () => void, ms: number) => timers.current.push(window.setTimeout(fn, ms))
   const clearTimers = () => {
@@ -37,51 +36,74 @@ export default function App() {
   }
   useEffect(() => clearTimers, [])
 
+  // Real people, balances and recent expenses from the backend.
+  useEffect(() => {
+    api.balances().then(setPeople).catch(() => {})
+    api.history().then(setHistory).catch(() => {})
+  }, [])
+
   const me = people.find((p) => p.is_me)
 
-  /** Plays the canned pipeline run: steps tick in, then the reply, then balances move. */
-  const play = useCallback(
-    (said: string, viaVoice: boolean) => {
-      clearTimers()
-      mic.stop()
-      setHeard(said)
-      setReply('')
-      setSteps([])
-      setReceipt(null)
-      setRunning(true)
-      setOrb('thinking')
+  const say = (text: string) => {
+    const words = text.split(' ')
+    words.forEach((_, i) => later(() => setReply(words.slice(0, i + 1).join(' ')), i * 45))
+  }
 
-      const run = DEMO_RUN.steps.filter((s) => viaVoice || s.step !== 'transcribe')
-      let t = 250
-      run.forEach((s) => {
-        t += Math.max(170, s.ms * 0.9)
-        later(() => setSteps((cur) => [...cur, s]), t)
-      })
+  /** Sends audio or text to the agent, then plays its steps in, then the reply, then balances move. */
+  const send = useCallback(async (input: { audio: Blob } | { text: string }, shown: string) => {
+    clearTimers()
+    setHeard(shown)
+    setReply('')
+    setSteps([])
+    setReceipt(null)
+    setRunning(true)
+    setOrb('thinking')
 
-      later(() => {
-        setRunning(false)
-        setOrb('reply')
-        const words = DEMO_RUN.reply.split(' ')
-        words.forEach((_, i) => later(() => setReply(words.slice(0, i + 1).join(' ')), i * 45))
-        setSplitWith(Object.keys(DEMO_RUN.deltas))
-        setPeople((ps) =>
-          ps.map((p) => {
-            const d = DEMO_RUN.deltas[p.name]
-            return d ? { ...p, net: fromCents(cents(p.net) + cents(d)) } : p
-          }),
-        )
-        const r: Receipt = { ...DEMO_RUN.receipt, spent_on: isoDay(new Date()), logged_at: new Date().toISOString() }
-        setReceipt(r)
-        setHistory((h) => [...h, { heard: said, steps: run, receipt: r }])
-        later(() => setOrb((o) => (o === 'reply' ? 'idle' : o)), 9000)
-      }, t + 350)
+    let r: api.IngestResult
+    try {
+      r = await api.ingest(input, session.current)
+    } catch (e) {
+      setRunning(false)
+      setOrb('reply')
+      say(`Something went wrong: ${(e as Error).message}`)
+      return
+    }
+
+    setHeard(r.transcript)
+    let t = 0
+    r.steps.forEach((s) => {
+      t += 220
+      later(() => setSteps((cur) => [...cur, s]), t)
+    })
+
+    later(() => {
+      setRunning(false)
+      setOrb(r.asking ? 'ask' : 'reply')
+      say(r.reply)
+      setSplitWith(r.split_with)
+      setPeople(r.people)
+      if (r.receipt) {
+        setReceipt(r.receipt)
+        setHistory((h) => [...h, { heard: r.transcript, steps: r.steps, receipt: r.receipt! }])
+      }
+      if (!r.asking) later(() => setOrb((o) => (o === 'reply' ? 'idle' : o)), 9000)
+    }, t + 300)
+  }, [])
+
+  const onAudio = useCallback(
+    (audio: Blob | null) => {
+      if (audio) return send({ audio }, '')
+      setOrb('reply')
+      setReply('I couldn’t use the microphone here. Try typing instead.')
     },
-    [mic],
+    [send],
   )
 
-  const onTap = useCallback(() => {
+  const mic = useRecorder(onAudio) // stops by itself when you go quiet
+
+  const onTap = useCallback(async () => {
     if (running) return
-    if (orb === 'listening') return play(DEMO_RUN.heard, true)
+    if (orb === 'listening') return onAudio(await mic.stop())
     clearTimers()
     setHeard('')
     setReply('')
@@ -89,8 +111,7 @@ export default function App() {
     setReceipt(null)
     setOrb('listening')
     mic.start()
-    later(() => play(DEMO_RUN.heard, true), 4200) // auto-stop, like silence detection will
-  }, [orb, running, mic, play])
+  }, [orb, running, mic, onAudio])
 
   // Space bar talks on desktop (unless you're typing)
   useEffect(() => {
@@ -110,7 +131,7 @@ export default function App() {
     if (!text || running) return
     setTyped('')
     ;(document.activeElement as HTMLElement | null)?.blur()
-    play(text, false)
+    send({ text }, text)
   }
 
   const shownReply = reply || (orb === 'idle' && !heard ? greeting(me?.name ?? 'there') : '')
@@ -154,7 +175,7 @@ export default function App() {
           <input
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
-            placeholder="or type it…"
+            placeholder={orb === 'ask' ? 'or type your answer…' : 'or type it…'}
             enterKeyHint="send"
             aria-label="Type an expense or a question"
           />

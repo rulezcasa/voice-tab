@@ -13,6 +13,11 @@ SS = {
     "password": os.environ["SS_PASSWORD"],
     "database": os.getenv("SS_DATABASE") or "tab",
 }
+# Optional SELECT-only user for the agent's SQL queries; without it, queries use SS (guarded in code).
+SS_READONLY = (
+    {**SS, "user": os.environ["SS_READONLY_USER"], "password": os.getenv("SS_READONLY_PASSWORD", "")}
+    if os.getenv("SS_READONLY_USER") else None
+)
 SL_BASE_URL = os.environ["SL_BASE_URL"]
 SL_API_KEY = os.environ["SL_API_KEY"]
 TZ = os.getenv("TZ", "America/Los_Angeles")

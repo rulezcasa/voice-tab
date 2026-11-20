@@ -9,29 +9,28 @@
 ## 1. Architecture
 
 ```
- ┌──────────────┐   audio/text    ┌────────────────────────────── FastAPI ─────────────────────────────┐
- │ Trigger agent│ ──────────────▶ │ /ingest                                                             │
- │   (TBD)      │                 │  1 transcribe ─▶ 2 route intent ─┬─▶ LOG   ─▶ 3 extract ─▶ 4 resolve│
- └──────────────┘                 │                                  │           people ─▶ 5 math ─▶    │
-        ▲                         │                                  │           6 confidence gate ─▶   │
-        │ answer / question       │                                  │           7 save ─▶ 8 balances   │
-        └──────────────────────── │                                  ├─▶ QUERY ─▶ filters + vector ─▶   │
-                                  │                                  │           rerank ─▶ answer       │
-                                  │                                  ├─▶ EDIT  ─▶ update last expense   │
-                                  │                                  └─▶ SETTLE ─▶ settlement expense   │
-                                  │  every step ─▶ audit_events                                         │
-                                  └───────────────┬───────────────────────────────┬─────────────────────┘
-                                                  │                               │
-                                       Superlinked SIE (models)          SingleStore (people, groups,
-                                       whisper · gliclass · gliner2      expenses, shares, audit_events,
-                                       bge-m3 · reranker · qwen          vectors + full-text)
+ ┌──────────────┐   audio/text    ┌──────────────────────── FastAPI ─────────────────────────┐
+ │ Trigger agent│ ──────────────▶ │ /ingest                                                  │
+ │   (TBD)      │                 │  1 transcribe ─▶ 2 agent (system prompt: schema, people, │
+ └──────────────┘                 │                  groups, categories, today) ─▶ tools:    │
+        ▲                         │                                                          │
+        │ answer / question       │   LOG / EDIT / SETTLE / UNDO ─▶ ledger tools (MCP)       │
+        └──────────────────────── │       log_expense · edit_expense · record_settlement ·   │
+                                  │       delete_expense · last_expense                      │
+                                  │   QUERY ─▶ `query` tool: one read-only SELECT            │
+                                  └──────────────┬──────────────────────────────┬────────────┘
+                                                 │                              │
+                                      Superlinked SIE (models)         SingleStore (people, groups,
+                                      whisper · bge-m3 · qwen          expenses, shares,
+                                                                       vectors + full-text)
 ```
 
 **Design rules**
-- **Models extract and classify; code decides.** Money math, date math and balances are deterministic Python.
+- **The agent decides, code does the math.** The agent picks the tool and fills its fields; money math and balances are deterministic Python.
 - **Never guess a person or an amount.** Low confidence or ambiguity means a clarifying question, not a guess.
 - **We own the ledger.** No Splitwise or other outside expense service. Expenses, shares and balances live in our own SingleStore tables.
-- **Everything leaves a trace.** Each step writes an `audit_events` row *before* returning.
+- **Writes go through the ledger, reads are SQL.** The agent changes money only via the ledger tools (they keep shares exact); questions are answered with one read-only SELECT (`SS_READONLY_USER`, SELECT-only check).
+- **No audit trail for now.** Add it back once the app works end to end.
 
 ---
 
@@ -39,10 +38,9 @@
 
 | Layer | Choice | Why |
 |---|---|---|
-| Backend | Python, FastAPI, `httpx`, `pydantic` | Fast to build; SIE has a Python SDK |
+| Backend | Python, FastAPI, `pydantic`, `mcp` | Fast to build; SIE has a Python SDK |
 | Inference | `sie-sdk` (SIE Serverless) | Sponsor; one API for all the small models |
 | DB | `singlestoredb` Python client | Sponsor; SQL + vector + full-text in one place |
-| Dates | `dateparser` (with a base date in the user's time zone) | Handles "yesterday", "last Wed" and so on |
 | Money | `decimal.Decimal` | No float rounding errors |
 | Frontend | Ambient agent like interactive UI with phone responiveness | No build step |
 
@@ -73,11 +71,15 @@ app/                     # backend. Run from here: cd app && fastapi dev main.py
       sl_client.py         # ONLY place that creates the SIE client + model IDs (Relay off)
       embeddings.py        # embed(), expense_embed_text()
     core/
-      audit/               # trail.py (write steps), feed.py (read trail); import as `from src.core import audit`
+      directory.py         # people and groups (for the system prompt)
+      query.py             # read-only SELECT check + run (text-to-SQL)
       expenses/
+        ledger.py          # the only code that writes expenses and shares
+        splits.py          # who paid / who owes
         categories.py      # fixed category list
-        money.py           # equal_split()
-    utils/                 # shared helpers: serialize.py (exact-money JSON), sql.py (rows -> dicts)
+        category.py        # classify(): nearest category by bge-m3
+    mcp/server.py          # MCP: ledger tools + `query` tool + `system` prompt; mounted at /mcp
+    utils/                 # shared helpers: sql.py (rows -> dicts)
   scripts/                 # check_s2, check_sie, seed  (run as: python -m scripts.<name>)
 ```
 Rule: nothing outside `app/src/db/s2_client.py` and `app/src/model/sl_client.py` opens its own database or SIE connection.
@@ -105,16 +107,8 @@ CREATE TABLE groups_ (
 
 CREATE TABLE group_members (group_id BIGINT, person_id BIGINT, PRIMARY KEY (group_id, person_id));
 
-CREATE TABLE utterances (
-  id          BIGINT AUTO_INCREMENT PRIMARY KEY,
-  created_at  DATETIME DEFAULT NOW(),
-  transcript  TEXT,
-  intent      VARCHAR(20)                   -- log | query | edit | settle | other
-);
-
 CREATE TABLE expenses (
   id                    BIGINT AUTO_INCREMENT PRIMARY KEY,
-  utterance_id          BIGINT,
   created_at            DATETIME DEFAULT NOW(),
   spent_on              DATE,
   amount                DECIMAL(10,2),
@@ -141,18 +135,6 @@ CREATE VIEW balances AS
 -- Settlements are included here on purpose: they are what bring a balance back to 0.
 -- Spending totals ("how much did I spend...") must filter out category = 'settlement'.
 
-CREATE TABLE audit_events (
-  id            BIGINT AUTO_INCREMENT PRIMARY KEY,
-  utterance_id  BIGINT,
-  expense_id    BIGINT NULL,
-  step          VARCHAR(40),                -- transcribe | route | extract | resolve | math | gate | store | balances | query
-  model         VARCHAR(80) NULL,
-  input         JSON,
-  output        JSON,
-  confidence    FLOAT NULL,
-  latency_ms    INT,
-  created_at    DATETIME(6) DEFAULT NOW(6)
-);
 
 ```
 
@@ -163,7 +145,7 @@ CREATE TABLE audit_events (
 
 ### Categories (fixed list)
 
-The model never invents a category. It picks one label from this list (zero-shot classification with gliclass on SIE); Python checks the label is in the list.
+The agent may pass a category; if it doesn't, the ledger picks the nearest one from this list by bge-m3 similarity. Python checks the label is in the list.
 
 | Category | Covers |
 |---|---|
@@ -178,7 +160,7 @@ The model never invents a category. It picks one label from this list (zero-shot
 | `travel` | Flights, hotels, Airbnb |
 | `health` | Pharmacy, doctor, gym |
 | `subscriptions` | Netflix, Spotify, software |
-| `other` | Fallback when the classifier's confidence is low |
+| `other` | Fallback when no category is close enough |
 | `settlement` | **Set by code only, never by the model.** A repayment between people |
 
 ### Settlements (no extra table)
@@ -193,21 +175,14 @@ Sam's balance goes back to 0, the original expense and everyone else's shares st
 
 ## 4. The pipeline, step by step
 
-Wrap each step in an `audit()` helper that times it and writes an `audit_events` row.
-
-```python
-async def audit(utt_id, step, model, inp, fn):
-    t = time.perf_counter()
-    out, conf = await fn()
-    db.insert_audit(utt_id, step, model, inp, out, conf, int((time.perf_counter()-t)*1000))
-    return out, conf
-```
-
 ### Step 1: Voice/test input (suitable SIE model)
 - The client proceses voice or text input.
-- Route intent : log an expense, ask about past spending, correct the last expense, record a settlement ("Sam paid me back"). This can be text-to-sql or MCP tools with the agent dynamically calls. 
-- Category: classify the description into one of the fixed categories (see §3). Below the confidence threshold → `other`.
-- Out extracted fieds :
+- The agent decides what to do from the `system` prompt (schema, people, groups, categories, today's date) and calls tools on the MCP server (`app/src/mcp/server.py`):
+  - log an expense → `log_expense`; correct the last one → `last_expense` + `edit_expense`; "Sam paid me back" → `record_settlement`; undo → `delete_expense`
+  - ask about past spending or balances → `query` with one read-only SELECT (text-to-SQL)
+- Category: the agent may pass one; if it doesn't, `log_expense` picks the nearest fixed category (see §3) by embedding. Below the threshold → `other`.
+- Dates: the agent works out the date from today's date in the system prompt and passes `spent_on` as YYYY-MM-DD.
+- Fields the agent fills for `log_expense`:
 ```json
 {
   "amount": "number",
@@ -249,6 +224,6 @@ def equal_split(total: Decimal, n: int) -> list[Decimal]:
 
 **Persona (~30 min):** one-time verification of the account owner. Before posting any expense that bills other people above a threshold (e.g. $100), check that verification status, and record "verified human: yes, inquiry id" in the audit trail.
 
-**Receipt photo (~30 min):** SIE OCR (`glm-ocr` / `lightonocr`) → the same extraction step.
+**Receipt photo (~30 min):** SIE OCR (`glm-ocr` / `lightonocr`) → text handed to the agent like a spoken utterance.
 
 ---

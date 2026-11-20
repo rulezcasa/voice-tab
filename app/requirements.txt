@@ -1,7 +1,7 @@
 fastapi[standard]
-httpx
 pydantic
 python-dotenv
 singlestoredb
-dateparser
+numpy
 sie-sdk
+mcp>=2

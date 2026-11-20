@@ -1,23 +1,4 @@
-"""SingleStore connection: the one place the app connects to the database.
-
-Usage:
-    from src.db.s2_client import cursor
-
-    with cursor() as cur:
-        cur.execute("SELECT name FROM people WHERE is_me")
-        print(cur.fetchone())
-
-Connections are pooled and kept open. Opening one costs ~700 ms; a query on an
-open one ~30 ms. warm() opens POOL_WARM connections at app startup; each
-cursor()/transaction() borrows one for the duration of its `with` block and
-hands it back (a connection is never used by two threads at once).
-
-- A connection idle for more than IDLE_PING_S is pinged (reconnected) before reuse.
-- A connection that hits a database error is discarded, not returned to the pool.
-- If the pool is empty a new connection is opened; at most POOL_MAX are kept idle.
-- cursor() runs with autocommit on. Use transaction() when several writes must
-  succeed or fail together (an expense and its shares).
-"""
+"""SingleStore connection: the one place the app connects to the database."""
 import json
 import queue
 import time
@@ -33,12 +14,13 @@ POOL_WARM = 4
 POOL_MAX = 8
 IDLE_PING_S = 30
 
-_idle: queue.LifoQueue = queue.LifoQueue()  # (conn, last_used); LIFO keeps hot connections hot
+_idle: queue.LifoQueue = queue.LifoQueue()     # (conn, last_used); LIFO keeps hot connections hot
+_idle_ro: queue.LifoQueue = queue.LifoQueue()  # same, for the read-only user (config.SS_READONLY)
 
 
-def connect():
+def connect(readonly: bool = False):
     """Open a brand-new, unpooled connection. Prefer cursor()/transaction()."""
-    conn = s2.connect(**config.SS, connect_timeout=15)
+    conn = s2.connect(**(config.SS_READONLY if readonly else config.SS), connect_timeout=15)
     conn.autocommit(True)
     return conn
 
@@ -50,12 +32,13 @@ def _close(conn) -> None:
         pass
 
 
-def _borrow():
+def _borrow(readonly: bool = False):
+    pool = _idle_ro if readonly else _idle
     while True:
         try:
-            conn, last_used = _idle.get_nowait()
+            conn, last_used = pool.get_nowait()
         except queue.Empty:
-            return connect()
+            return connect(readonly)
         if time.monotonic() - last_used <= IDLE_PING_S:
             return conn
         try:
@@ -65,11 +48,12 @@ def _borrow():
             _close(conn)  # dead; try the next idle one
 
 
-def _give_back(conn, broken: bool) -> None:
-    if broken or _idle.qsize() >= POOL_MAX:
+def _give_back(conn, broken: bool, readonly: bool = False) -> None:
+    pool = _idle_ro if readonly else _idle
+    if broken or pool.qsize() >= POOL_MAX:
         _close(conn)
     else:
-        _idle.put((conn, time.monotonic()))
+        pool.put((conn, time.monotonic()))
 
 
 def _is_db_error(e: Exception) -> bool:
@@ -77,8 +61,10 @@ def _is_db_error(e: Exception) -> bool:
 
 
 @contextmanager
-def cursor() -> Iterator:
-    conn, broken = _borrow(), False
+def cursor(readonly: bool = False) -> Iterator:
+    """readonly=True uses the SELECT-only user when SS_READONLY_USER is set, else the normal one."""
+    readonly = readonly and config.SS_READONLY is not None
+    conn, broken = _borrow(readonly), False
     try:
         with conn.cursor() as cur:
             yield cur
@@ -86,7 +72,7 @@ def cursor() -> Iterator:
         broken = _is_db_error(e)
         raise
     finally:
-        _give_back(conn, broken)
+        _give_back(conn, broken, readonly)
 
 
 @contextmanager
@@ -122,12 +108,13 @@ def warm(n: int = POOL_WARM) -> None:
 
 
 def close_all() -> None:
-    while True:
-        try:
-            conn, _ = _idle.get_nowait()
-        except queue.Empty:
-            return
-        _close(conn)
+    for pool in (_idle, _idle_ro):
+        while True:
+            try:
+                conn, _ = pool.get_nowait()
+            except queue.Empty:
+                break
+            _close(conn)
 
 
 def to_vector(v: Sequence[float]) -> str:

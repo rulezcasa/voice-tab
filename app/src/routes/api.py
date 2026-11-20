@@ -1,13 +1,13 @@
-"""HTTP routes, all under /api. main.py mounts `router`; endpoints live here, logic lives in src/core.
-
-The webapp (../webapp) is served at / by main.py.
-"""
+"""HTTP routes, all under /api. main.py mounts `router`; endpoints live here, logic lives in src/core."""
 import time
+from datetime import date
+from decimal import Decimal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from src.core import audit
 from src.core.expenses import ledger
+from src.core.expenses.ledger import LedgerError
 from src.db.s2_client import cursor
 from src.model.sl_client import MODELS, sie
 
@@ -40,24 +40,6 @@ def health():
     return out
 
 
-@router.get("/audit")
-def audit_feed(after: int = 0, limit: int = 100, tail: int | None = None):
-    """Live trail for the UI: poll with ?after=<last id seen>, or ?tail=N for the latest N."""
-    if tail is not None:
-        return audit.events_tail(min(tail, 500))
-    return audit.events_since(after, min(limit, 500))
-
-
-@router.get("/audit/utterance/{utt_id}")
-def audit_utterance(utt_id: int):
-    return audit.events_for_utterance(utt_id)
-
-
-@router.get("/audit/expense/{expense_id}")
-def audit_expense(expense_id: int):
-    return audit.events_for_expense(expense_id)
-
-
 @router.get("/balances")
 def get_balances():
     """Everyone's net balance; positive = is owed, negative = owes. Money as strings."""
@@ -68,3 +50,69 @@ def get_balances():
 def get_expenses(limit: int = 20):
     """Recent expenses, newest first, with shares."""
     return ledger.recent(min(limit, 100))
+
+
+# ---------- direct ledger writes (structured input; the agent uses the same ledger via src/mcp/server.py) ----------
+
+class ExpenseIn(BaseModel):
+    amount: Decimal
+    description: str
+    category: str = "other"
+    merchant: str | None = None
+    spent_on: date | None = None
+    payer_id: int | None = None                 # default: me
+    participant_ids: list[int] | None = None    # default: just me (personal)
+    custom: dict[int, Decimal] | None = None    # person_id -> exact owed
+    group_id: int | None = None
+
+
+class ExpensePatch(BaseModel):
+    amount: Decimal | None = None
+    description: str | None = None
+    category: str | None = None
+    merchant: str | None = None
+    spent_on: date | None = None
+    payer_id: int | None = None
+    participant_ids: list[int] | None = None
+    custom: dict[int, Decimal] | None = None
+    group_id: int | None = None
+
+
+class SettlementIn(BaseModel):
+    amount: Decimal
+    from_id: int
+    to_id: int | None = None                    # default: me
+    group_id: int | None = None
+    spent_on: date | None = None
+
+
+def _ledger_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except LedgerError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/expenses/{expense_id}")
+def get_expense(expense_id: int):
+    return _ledger_call(ledger.get_expense, expense_id)
+
+
+@router.post("/expenses")
+def create_expense(body: ExpenseIn):
+    return _ledger_call(ledger.create_expense, **body.model_dump())
+
+
+@router.patch("/expenses/{expense_id}")
+def update_expense(expense_id: int, body: ExpensePatch):
+    return _ledger_call(ledger.update_expense, expense_id, **body.model_dump(exclude_unset=True))
+
+
+@router.delete("/expenses/{expense_id}")
+def delete_expense(expense_id: int):
+    return _ledger_call(ledger.delete_expense, expense_id)
+
+
+@router.post("/settlements")
+def record_settlement(body: SettlementIn):
+    return _ledger_call(ledger.record_settlement, **body.model_dump())
