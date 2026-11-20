@@ -4,7 +4,7 @@ import time
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from src.core import agent
+from src.agents import agent
 from src.core.expenses import ledger
 from src.model import stt
 from src.model.sl_client import MODELS

@@ -3,7 +3,8 @@ import asyncio
 import json
 import time
 
-from src.mcp.server import mcp, system_prompt
+from src.agents.prompts import system_prompt
+from src.mcp.server import mcp
 from src.model.sl_client import MODELS, sie
 
 MAX_ROUNDS = 5     # model calls per utterance
