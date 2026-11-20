@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from src import config
 from src.core.expenses.categories import ALL_CATEGORIES, SETTLEMENT
 from src.core.expenses.splits import Share, SplitError, build_shares, settlement_shares, to_money
+from src.core.expenses.settle import pairwise, suggest_transfers
 from src.db.s2_client import cursor, to_vector, transaction
 from src.model.embeddings import embed, expense_embed_text
 from src.utils.query import rows_as_dicts
@@ -113,9 +114,29 @@ def balances_for(person_ids: list[int]) -> dict[int, str]:
     return {pid: got.get(pid, "0.00") for pid in ids}
 
 
+def owes_summary(person_id: int) -> dict:
+    """Return pairwise debt detail and a minimal suggested set of repayments."""
+    with cursor() as cur:
+        cur.execute(_EXPENSE_COLS + " WHERE e.category <> %s ORDER BY e.id", (SETTLEMENT,))
+        expenses = _with_shares(cur, rows_as_dicts(cur))
+    pairs = pairwise(expenses)
+    nets = {p["id"]: Decimal(p["net"]) for p in balances()}
+    return {
+        "person_id": person_id,
+        "pairwise": [p for p in pairs if p["from"] == person_id or p["to"] == person_id],
+        "suggested_transfers": suggest_transfers(nets),
+    }
+
+
+def _publish_ledger(expense: dict) -> None:
+    from src.core import live
+
+    live.publish({"type": "ledger", "people": balances(), "expense": expense})
+
+
 _EXPENSE_COLS = (
     "SELECT e.id, e.created_at, e.spent_on, e.amount, e.currency, e.description,"
-    " e.merchant, e.category, e.group_id, e.status, e.is_demo, g.name AS group_name"
+    " e.merchant, e.category, e.group_id, e.meetup_id, e.status, e.is_demo, g.name AS group_name"
     " FROM expenses e LEFT JOIN groups_ g ON g.id = e.group_id"
 )
 
@@ -179,6 +200,7 @@ def create_expense(
     payer_id: int | None = None, participant_ids: list[int] | None = None,
     custom: dict[int, object] | None = None, spent_on: date | None = None,
     merchant: str | None = None, currency: str | None = None, group_id: int | None = None,
+    meetup_id: int | None = None,
 ) -> dict:
     """Save a purchase. Defaults: I paid, it's just mine, dated today."""
     me = me_id()
@@ -195,14 +217,16 @@ def create_expense(
         _check_group(cur, group_id)
         cur.execute(
             "INSERT INTO expenses (spent_on, amount, currency, description, merchant,"
-            " category, group_id, status, embedding)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, 'logged', %s)",
+            " category, group_id, meetup_id, status, embedding)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'logged', %s)",
             (spent_on, total, (currency or config.DEFAULT_CURRENCY).upper()[:3],
-             description, merchant, category, group_id, vec),
+             description, merchant, category, group_id, meetup_id, vec),
         )
         expense_id = cur.lastrowid
         _insert_shares(cur, expense_id, shares)
-    return _result(expense_id)
+    result = _result(expense_id)
+    _publish_ledger(result["expense"])
+    return result
 
 
 def update_expense(
@@ -256,7 +280,9 @@ def update_expense(
         if shares:
             cur.execute("DELETE FROM expense_shares WHERE expense_id = %s", (expense_id,))
             _insert_shares(cur, expense_id, shares)
-    return _result(expense_id)
+    result = _result(expense_id)
+    _publish_ledger(result["expense"])
+    return result
 
 
 def record_settlement(
@@ -290,7 +316,9 @@ def record_settlement(
         )
         expense_id = cur.lastrowid
         _insert_shares(cur, expense_id, shares)
-    return _result(expense_id)
+    result = _result(expense_id)
+    _publish_ledger(result["expense"])
+    return result
 
 
 def delete_expense(expense_id: int) -> dict:
@@ -300,7 +328,9 @@ def delete_expense(expense_id: int) -> dict:
         cur.execute("DELETE FROM expense_shares WHERE expense_id = %s", (expense_id,))
         cur.execute("DELETE FROM expenses WHERE id = %s", (expense_id,))
     people = [s["person_id"] for s in old["shares"]]
-    return {"deleted": old, "balances": balances_for(people)}
+    result = {"deleted": old, "balances": balances_for(people)}
+    _publish_ledger(old)
+    return result
 
 
 def _result(expense_id: int) -> dict:
