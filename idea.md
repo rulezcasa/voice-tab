@@ -1,309 +1,66 @@
-# Personal Memory Agent
+# The Expense agent you just talk to
 
-## One-Line Idea
 
-**An AI agent that remembers the small details of your life that are
-easy to forget but unexpectedly useful later.**
+## The problem
 
-Instead of manually organizing notes, lists, and trackers, users can
-naturally tell, show, or eventually speak to the agent. The agent
-decides what is worth remembering, converts it into structured memory,
-updates old memories when circumstances change, and retrieves the right
-information when needed.
+Expense trackers and Splitwise fail for one reason: logging is a chore, so you put it off and then forget.
 
-------------------------------------------------------------------------
+To log one grocery run in Splitwise you have to:
 
-## The Problem
+1. Open the app
+2. Pick the group
+3. Type the description and the amount
+4. Pick who's in on it and how it's split
+5. Fix the date if it wasn't today
 
-Every day, we encounter small pieces of information that are useful
-later but not important enough to carefully organize:
+That's five steps of friction for a $40 receipt. So expenses go unlogged, roommates chase each other, and when you later wonder "what was that $20 on Tuesday?" there's nothing to look up.
 
--   "I lent Daniel my USB-C hub."
--   "I put my passport in the top desk drawer."
--   "The apartment uses 16x20x1 air filters."
--   "Last time the Wi-Fi broke, restarting the modem fixed it."
--   "I parked on level 4 near elevator B."
--   "I promised Sarah I'd send her the slides."
--   "I liked the spicy ramen at that restaurant."
--   "My bike tires were at 45 PSI last time."
+## The solution
 
-Existing tools are poorly suited to this.
+An ambient, voice-first agent. Hit one button and talk:
 
-Calendars are for events. Task managers are for actions. Notes apps
-require users to intentionally record and organize information. Search
-only works if the information was stored somewhere in the first place.
+| You say | Tab does |
+| --- | --- |
+| "I paid 40 bucks for groceries today, split with my roommates." | Resolves "roommates" to Sam and Priya, splits $40 three ways ($13.34 / $13.33 / $13.33), creates the expense in the Splitwise group "Apt 4B". Sam and Priya get the Splitwise notification. |
+| "Spent 20 on a cab." | Logs a personal $20 expense, category Transport, dated today. Nothing goes to Splitwise. |
+| "Dinner was 90, me, Sam and Alex." | There are two Alexes in your contacts, so it asks: "Alex Chen or Alex Park?" |
+| "Actually the groceries were 45." | Updates the last expense and recalculates the shares. |
+| "What did I spend 20 dollars on last Wednesday?" | "A cab: $20 on Wed Nov 12, logged at 6:42 pm." It shows the exact record. |
+| "How much have I spent on rides this month?" | Finds cab, Uber and Lyft entries by meaning, not keywords, and returns the total with the rows behind it. |
 
-The problem is not that people cannot store information.
+## Potential Sponsor tools
 
-**The problem is that most small life details do not feel important
-enough to store until the moment we need them.**
+### Core: Superlinked SIE (all inference)
 
-------------------------------------------------------------------------
+Tab is built as a harness of small, task-specific models served by SIE, rather than one big LLM doing everything.
 
-## The Solution
+Winning critera : Best Personal Agent Harness Using SIE Serverless | Best Technical Build for Personal Agents.**
 
-Build a **Personal Memory Agent** that acts as a memory layer for
-everyday life.
+### Core: SingleStore (memory)
 
-Users communicate naturally:
+One database for both kinds of question:
 
-> "Alex borrowed my black hoodie today."
+- Exact questions ("$20, last Wednesday") are plain SQL filters on amount and date.
+- Fuzzy questions ("rides", "roomies") use vector similarity on bge-m3 embeddings, in the same query.
 
-The agent recognizes that this could matter later and creates a memory:
+### Optional, if time permits
 
-``` json
-{
-  "type": "lent_item",
-  "item": "black hoodie",
-  "person": "Alex",
-  "status": "outstanding",
-  "date": "2026-11-18"
-}
-```
+- Airbyte: sync card transactions (a Google Sheet of exported statements, or Gmail receipts) into SingleStore so Tab can reconcile: "You said $40, but Safeway charged $43.17. Update it?"
+- Persona: verify the human behind the agent before it posts expenses that bill other people, and show a "verified human" badge on each Splitwise entry in the audit trail.
 
-Later:
+## Demo script (3 minutes)
 
-> "Alex returned my hoodie."
+1. Hook (15 s): "Show of hands: who has an unlogged expense right now?"
+2. The money shot (45 s): "I paid 40 bucks for groceries today, split with my roommates." Two teammates on stage hold up their phones with the notification. The audit trail fills in live.
+3. Personal expense (15 s): "Spent 20 on a cab." It's logged with no split.
+4. Clarifying question (30 s): "Dinner was 90 with Sam and Alex." Tab asks "Alex Chen or Alex Park?" We answer "Chen" and it posts.
+5. Recall (45 s): "What did I spend 20 dollars on last Wednesday?" → the exact record. Then "How much on rides this month?" → semantic matches and a total.
+6. Under the hood (30 s): the audit trail: N small-model calls, each with model, confidence and latency; the SQL that answered the question; the Splitwise API response.
 
-Instead of creating another unrelated note, the agent finds the existing
-memory and updates it:
+## Pitch lines
 
-``` text
-Black hoodie -> Alex -> returned
-```
+"Splitwise is great at the ledger and terrible at the logging. Tab is the logging."
 
-The user can then ask:
+"Small models do the work and every decision leaves a receipt."
 
-> "Who currently has my stuff?"
-
-The agent retrieves only active lending memories and answers naturally.
-
-------------------------------------------------------------------------
-
-## Core Principle
-
-The user should **not** have to maintain a database.
-
-They should not need forms such as:
-
-``` text
-Item: USB-C Hub
-Person: Daniel
-Transaction: Lent
-Date: November 18
-Status: Outstanding
-```
-
-They simply say:
-
-> "I gave Daniel my USB-C hub."
-
-The agent handles the rest.
-
-The interface is conversation.
-
-The database exists behind the scenes.
-
-------------------------------------------------------------------------
-
-## What Can the Agent Remember?
-
-### 1. Borrowed and Lent Items
-
-> "Mike borrowed my charger."
-
-Stores:
-
--   Item
--   Person
--   Date
--   Status
--   Optional expected return date
-
-Later:
-
-> "Who has something of mine?"
-
-------------------------------------------------------------------------
-
-### 2. Where Things Are
-
-> "I put my passport in the top drawer."
-
-Stores:
-
--   Object
--   Location
--   Date last seen
--   Optional photo
-
-Later:
-
-> "Where's my passport?"
-
-------------------------------------------------------------------------
-
-### 3. "Last Time" Knowledge
-
-> "Restarting the modem fixed the Wi-Fi."
-
-Later:
-
-> "What did I do last time the Wi-Fi stopped working?"
-
-The agent retrieves the previous experience instead of giving generic
-internet troubleshooting advice.
-
-------------------------------------------------------------------------
-
-### 4. Personal Facts
-
-> "My apartment uses 16x20x1 air filters."
-
-Later:
-
-> "What size air filter do I need?"
-
-------------------------------------------------------------------------
-
-### 5. Commitments
-
-> "I told Maya I'd send her the dataset."
-
-Stores:
-
--   Person
--   Commitment
--   Date
--   Status
-
-Later:
-
-> "Did I promise anyone anything this week?"
-
-------------------------------------------------------------------------
-
-### 6. Experiences and Preferences
-
-> "I really liked the spicy miso ramen here."
-
-Later:
-
-> "What did I order last time?"
-
-------------------------------------------------------------------------
-
-### 7. Temporary Context
-
-> "I parked on level 4, section C, near elevator B."
-
-This information may be useful for hours rather than years.
-
-The system can distinguish between **short-lived memories** and
-**long-term memories**.
-
-------------------------------------------------------------------------
-
-## How Information Enters the Agent
-
-### Text
-
-The simplest MVP.
-
-Users naturally message the agent:
-
-> "Remember that Jake has my drill."
-
-Or, ideally:
-
-> "Jake has my drill."
-
-The agent automatically determines whether the statement is worth
-remembering.
-
-### Voice
-
-Voice makes memory capture almost effortless.
-
-A user could say while leaving home:
-
-> "I'm putting the spare key behind the cereal boxes."
-
-The system transcribes the voice and processes it through the same
-memory pipeline.
-
-### Photos
-
-A user could photograph a drawer and say:
-
-> "I'm putting my passport here."
-
-The agent stores:
-
--   The extracted description
--   Relevant objects
--   Location context
--   Original image reference
-
-When asked later, it can return both the answer and the original photo.
-
-### Screenshots
-
-A screenshot might contain useful information such as:
-
--   Parking confirmation
--   Return deadline
--   Reservation information
--   Someone promising to return an item
--   Instructions worth remembering
-
-The agent extracts the useful information rather than storing only an
-unsearchable screenshot.
-
-------------------------------------------------------------------------
-
-## The Interesting AI Problem
-
-The central question is:
-
-> **Is this information likely to be useful to this person later?**
-
-Every user message does not need to become permanent memory.
-
-Example:
-
-> "I'm tired today."
-
-Probably do not store permanently.
-
-But:
-
-> "My landlord said the water shutoff valve is behind the washing
-> machine."
-
-Potentially very useful later.
-
-The agent performs a memory-worthiness decision:
-
-``` text
-Incoming information
-        |
-        v
-Is this worth remembering?
-       / \
-     No   Yes
-     |     |
-Normal    Extract
-reply     memory
-            |
-            v
-      New or existing?
-          /      \
-       New       Existing
-        |           |
-      Store       Update
-```
-
-This decision-making layer is what makes the product an **agent**,
-rather than simply a searchable notes application.
-
+https://markdownlivepreview.com
