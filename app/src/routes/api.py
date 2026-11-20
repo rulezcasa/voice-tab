@@ -6,6 +6,8 @@ from decimal import Decimal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from src.agents import hangout_llm
+from src.core import hangout, places
 from src.core.expenses import ledger
 from src.core.expenses.ledger import LedgerError
 from src.db.s2_client import cursor
@@ -138,3 +140,16 @@ def delete_expense(expense_id: int):
 @router.post("/settlements")
 def record_settlement(body: SettlementIn):
     return _ledger_call(ledger.record_settlement, **body.model_dump())
+
+
+# ---------- hangout: real places near the group (the map's Hangout panel) ----------
+
+@router.post("/hangout")
+def find_hangout(body: hangout.HangoutRequest):
+    """Real places (OpenStreetMap) everyone can reach in time and afford. Only the search circle leaves the server."""
+    try:
+        return hangout.recommend(body, places.nearby, llm=hangout_llm)
+    except hangout.HangoutError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except places.PlacesError as e:
+        raise HTTPException(status_code=502, detail=str(e))
