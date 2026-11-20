@@ -1,5 +1,6 @@
 // Backend calls. Vite proxies /api to FastAPI on :8000 (see vite.config.ts).
-import type { Activity, Person, Receipt, TrailStep } from './types'
+import { mockHangout } from './mockHangout'
+import type { Activity, GroupBalance, HangoutRequest, HangoutResult, Person, Receipt, TrailStep } from './types'
 
 export interface IngestResult {
   transcript: string
@@ -43,6 +44,21 @@ export async function balances(): Promise<Person[]> {
   return json(await fetch('/api/balances'))
 }
 
+export async function groupBalances(): Promise<GroupBalance[]> {
+  return json(await fetch('/api/balances/groups'))
+}
+
+/** New group; I'm added as a member automatically. Throws with the server's message on a bad name. */
+export async function createGroup(name: string, memberIds: number[]): Promise<{ id: number; name: string }> {
+  return json(
+    await fetch('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, member_ids: memberIds }),
+    }),
+  )
+}
+
 interface ApiExpense {
   description: string
   amount: string
@@ -69,4 +85,24 @@ export async function history(limit = 30): Promise<Activity[]> {
       shares: e.shares.map(({ name, is_me, paid, owed }) => ({ name, is_me, paid, owed })),
     },
   }))
+}
+
+/**
+ * Places that fit the group. Uses POST /api/hangout once the backend has it; until then
+ * (404, or no backend running) it falls back to a local mock so the UI can be built and demoed.
+ */
+export async function hangout(req: HangoutRequest): Promise<HangoutResult> {
+  let res: Response
+  try {
+    res = await fetch('/api/hangout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    })
+  } catch {
+    return mockHangout(req)
+  }
+  // 404/405 = route not built yet; a non-JSON error = the dev proxy couldn't reach the backend
+  if (res.status === 404 || res.status === 405 || (!res.ok && !res.headers.get('content-type')?.includes('json'))) return mockHangout(req)
+  return json(res)
 }
