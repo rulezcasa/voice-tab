@@ -99,6 +99,42 @@ def balances() -> list[dict]:
     return rows
 
 
+def group_balances() -> list[dict]:
+    """Balances per group: every group (by name), then a non-group bucket (id None) if any
+    expense has no group. Each has my net in it and every member's net (me first)."""
+    with cursor() as cur:
+        cur.execute("SELECT id, name FROM groups_ ORDER BY name")
+        buckets: dict[int | None, dict] = {gid: {"id": gid, "name": name, "people": {}} for gid, name in cur.fetchall()}
+        cur.execute(
+            "SELECT m.group_id, p.id, p.name, p.is_me FROM group_members m JOIN people p ON p.id = m.person_id"
+        )
+        for gid, pid, name, is_me in cur.fetchall():
+            if gid in buckets:
+                buckets[gid]["people"][pid] = {"id": pid, "name": name, "is_me": bool(is_me), "net": Decimal(0)}
+        cur.execute(
+            "SELECT e.group_id, p.id, p.name, p.is_me, SUM(s.paid - s.owed) FROM expense_shares s"
+            " JOIN expenses e ON e.id = s.expense_id JOIN people p ON p.id = s.person_id"
+            " GROUP BY e.group_id, p.id, p.name, p.is_me"
+        )
+        for gid, pid, name, is_me, net in cur.fetchall():
+            if gid not in buckets:  # NULL group (or a deleted one) counts as non-group
+                gid = None
+                buckets.setdefault(None, {"id": None, "name": "Non-group", "people": {}})
+            row = buckets[gid]["people"].setdefault(pid, {"id": pid, "name": name, "is_me": bool(is_me), "net": Decimal(0)})
+            row["net"] += net or 0
+
+    out = []
+    for gid in [g for g in buckets if g is not None] + ([None] if None in buckets else []):
+        b = buckets[gid]
+        people = sorted(b["people"].values(), key=lambda p: (not p["is_me"], p["name"]))
+        mine = next((p["net"] for p in people if p["is_me"]), Decimal(0))
+        out.append({
+            "id": b["id"], "name": b["name"], "net": _money(mine),
+            "people": [{**p, "net": _money(p["net"])} for p in people],
+        })
+    return out
+
+
 def balances_for(person_ids: list[int]) -> dict[int, str]:
     ids = list(dict.fromkeys(person_ids))
     if not ids:
