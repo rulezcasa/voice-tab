@@ -3,8 +3,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+APP_DIR = Path(__file__).resolve().parent.parent  # app/
+load_dotenv(APP_DIR / ".env")
 
 SS = {
     "host": os.environ["SS_HOST"],

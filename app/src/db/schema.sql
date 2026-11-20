@@ -42,7 +42,7 @@ CREATE TABLE expenses (
   currency      CHAR(3) DEFAULT 'USD',
   description   VARCHAR(255),                -- the user's own words ("tomato")
   merchant      VARCHAR(120),
-  category      VARCHAR(40),                 -- fixed list in src/core/categories.py, 'settlement' = repayment
+  category      VARCHAR(40),                 -- fixed list in src/core/expenses/categories.py, 'settlement' = repayment
   group_id      BIGINT NULL,                 -- NULL = personal
   status        VARCHAR(20) DEFAULT 'logged',-- logged | needs_clarification | failed
   is_demo       BOOLEAN DEFAULT FALSE,       -- seeded demo data

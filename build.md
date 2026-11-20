@@ -57,21 +57,30 @@ TZ=America/Los_Angeles
 
 **Code layout**
 ```
-main.py                  # FastAPI entry point. Run: fastapi dev main.py
-src/
-  config.py              # reads .env
-  db/
-    s2_client.py         # ONLY place that connects to SingleStore: cursor(), transaction(), to_vector()
-    schema.sql
-  model/
-    sl_client.py         # ONLY place that creates the SIE client + model IDs (Relay off)
-    embeddings.py        # embed(), expense_embed_text()
-  core/
-    categories.py        # fixed category list
-    money.py             # equal_split()
-scripts/                 # check_s2, check_sie, seed  (run as: python -m scripts.<name>)
+webapp/                  # PWA: Vite + React + TS. cd webapp && npm run dev (dummy data for now)
+app/                     # backend. Run from here: cd app && fastapi dev main.py
+  .env                   # backend config (copy from .env.example)
+  requirements.txt
+  main.py                  # FastAPI entry point: app, startup/shutdown, mounts routes
+  src/
+    config.py              # reads .env
+    routes/
+      api.py               # all HTTP endpoints (APIRouter); logic stays in core/
+    db/
+      s2_client.py         # ONLY place that connects to SingleStore: cursor(), transaction(), to_vector()
+      schema.sql
+    model/
+      sl_client.py         # ONLY place that creates the SIE client + model IDs (Relay off)
+      embeddings.py        # embed(), expense_embed_text()
+    core/
+      audit/               # trail.py (write steps), feed.py (read trail); import as `from src.core import audit`
+      expenses/
+        categories.py      # fixed category list
+        money.py           # equal_split()
+    utils/                 # shared helpers: serialize.py (exact-money JSON), sql.py (rows -> dicts)
+  scripts/                 # check_s2, check_sie, seed  (run as: python -m scripts.<name>)
 ```
-Rule: nothing outside `src/db/s2_client.py` and `src/model/sl_client.py` opens its own database or SIE connection.
+Rule: nothing outside `app/src/db/s2_client.py` and `app/src/model/sl_client.py` opens its own database or SIE connection.
 
 ---
 
