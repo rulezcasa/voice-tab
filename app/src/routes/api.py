@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from src.core.expenses import ledger
 from src.core.expenses.ledger import LedgerError
 from src.db.s2_client import cursor
+from src.utils import directory
+from src.utils.directory import DirectoryError
 from src.model.sl_client import MODELS, sie
 
 router = APIRouter(prefix="/api")
@@ -44,6 +46,26 @@ def health():
 def get_balances():
     """Everyone's net balance; positive = is owed, negative = owes. Money as strings."""
     return ledger.balances()
+
+
+@router.get("/balances/groups")
+def get_group_balances():
+    """Balances per group, plus a "Non-group" bucket for expenses outside any group."""
+    return ledger.group_balances()
+
+
+class GroupIn(BaseModel):
+    name: str
+    member_ids: list[int] = []                  # I'm added automatically
+    aliases: list[str] | None = None
+
+
+@router.post("/groups")
+def create_group(body: GroupIn):
+    try:
+        return directory.create_group(body.name, body.member_ids, body.aliases)
+    except DirectoryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.get("/expenses")
