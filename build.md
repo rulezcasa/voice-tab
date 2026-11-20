@@ -17,7 +17,8 @@
         │ answer / question       │                                  │           7 save ─▶ 8 balances   │
         └──────────────────────── │                                  ├─▶ QUERY ─▶ filters + vector ─▶   │
                                   │                                  │           rerank ─▶ answer       │
-                                  │                                  └─▶ EDIT  ─▶ update last expense   │
+                                  │                                  ├─▶ EDIT  ─▶ update last expense   │
+                                  │                                  └─▶ SETTLE ─▶ settlement expense   │
                                   │  every step ─▶ audit_events                                         │
                                   └───────────────┬───────────────────────────────┬─────────────────────┘
                                                   │                               │
@@ -39,7 +40,7 @@
 | Layer | Choice | Why |
 |---|---|---|
 | Backend | Python, FastAPI, `httpx`, `pydantic` | Fast to build; SIE has a Python SDK |
-| Inference | `sie-serverless`| Sponsor; one API for all the small models |
+| Inference | `sie-sdk` (SIE Serverless) | Sponsor; one API for all the small models |
 | DB | `singlestoredb` Python client | Sponsor; SQL + vector + full-text in one place |
 | Dates | `dateparser` (with a base date in the user's time zone) | Handles "yesterday", "last Wed" and so on |
 | Money | `decimal.Decimal` | No float rounding errors |
@@ -48,11 +49,29 @@
 
 `.env`
 ```
-SIE_BASE_URL=...
-SIE_API_KEY=...
-S2_HOST=...  S2_USER=...  S2_PASSWORD=...  S2_DB=tab
+SL_BASE_URL=...
+SL_API_KEY=...
+SS_HOST=...  SS_PORT=3306  SS_USER=...  SS_PASSWORD=...  SS_DATABASE=tab
 TZ=America/Los_Angeles
 ```
+
+**Code layout**
+```
+main.py                  # FastAPI entry point. Run: fastapi dev main.py
+src/
+  config.py              # reads .env
+  db/
+    s2_client.py         # ONLY place that connects to SingleStore: cursor(), transaction(), to_vector()
+    schema.sql
+  model/
+    sl_client.py         # ONLY place that creates the SIE client + model IDs (Relay off)
+    embeddings.py        # embed(), expense_embed_text()
+  core/
+    categories.py        # fixed category list
+    money.py             # equal_split()
+scripts/                 # check_s2, check_sie, seed  (run as: python -m scripts.<name>)
+```
+Rule: nothing outside `src/db/s2_client.py` and `src/model/sl_client.py` opens its own database or SIE connection.
 
 ---
 
@@ -81,7 +100,7 @@ CREATE TABLE utterances (
   id          BIGINT AUTO_INCREMENT PRIMARY KEY,
   created_at  DATETIME DEFAULT NOW(),
   transcript  TEXT,
-  intent      VARCHAR(20)                   -- log | query | edit | other
+  intent      VARCHAR(20)                   -- log | query | edit | settle | other
 );
 
 CREATE TABLE expenses (
@@ -93,7 +112,7 @@ CREATE TABLE expenses (
   currency              CHAR(3) DEFAULT 'USD',
   description           VARCHAR(255),
   merchant              VARCHAR(120),
-  category              VARCHAR(40),    -- fixed set of categories (groceries, transport etc) 
+  category              VARCHAR(40),    -- one of the fixed categories below; 'settlement' = a repayment
   group_id              BIGINT NULL,        -- NULL = personal
   status                VARCHAR(20),        -- logged | needs_clarification | failed
   embedding             VECTOR(1024),
@@ -110,6 +129,8 @@ CREATE TABLE expense_shares (
 CREATE VIEW balances AS
   SELECT person_id, SUM(paid - owed) AS net
   FROM expense_shares GROUP BY person_id;
+-- Settlements are included here on purpose: they are what bring a balance back to 0.
+-- Spending totals ("how much did I spend...") must filter out category = 'settlement'.
 
 CREATE TABLE audit_events (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -131,6 +152,34 @@ CREATE TABLE audit_events (
 - Insert group "Apt 4B" 
 - Insert about 30 **demo** expenses over the past 3 weeks so recall queries have data. Include a $20 cab last Wednesday and a few Uber/Lyft rides. Label them as demo data.
 
+### Categories (fixed list)
+
+The model never invents a category. It picks one label from this list (zero-shot classification with gliclass on SIE); Python checks the label is in the list.
+
+| Category | Covers |
+|---|---|
+| `groceries` | Supermarket, Costco, Trader Joe's |
+| `dining` | Restaurants, takeout, coffee, bars |
+| `transport` | Cabs, Uber/Lyft, transit, gas, parking |
+| `rent` | Rent, deposits |
+| `utilities` | Electricity, water, internet, phone |
+| `household` | Cleaning supplies, furniture, repairs |
+| `shopping` | Clothes, electronics, general purchases |
+| `entertainment` | Movies, concerts, games, events |
+| `travel` | Flights, hotels, Airbnb |
+| `health` | Pharmacy, doctor, gym |
+| `subscriptions` | Netflix, Spotify, software |
+| `other` | Fallback when the classifier's confidence is low |
+| `settlement` | **Set by code only, never by the model.** A repayment between people |
+
+### Settlements (no extra table)
+
+"Sam paid me back 13.33" is stored as a normal expense with `category = 'settlement'`:
+- `expenses`: amount 13.33, description "Sam paid me back", `group_id` of the shared group.
+- `expense_shares`: Sam `paid = 13.33, owed = 0`; me `paid = 0, owed = 13.33`.
+
+Sam's balance goes back to 0, the original expense and everyone else's shares stay untouched, and there's a dated record of the repayment. Spending totals exclude `settlement`; balances include it.
+
 ---
 
 ## 4. The pipeline, step by step
@@ -147,7 +196,8 @@ async def audit(utt_id, step, model, inp, fn):
 
 ### Step 1: Voice/test input (suitable SIE model)
 - The client proceses voice or text input.
-- Route intent : log an expense, ask about past spending, correct the last expense. This can be text-to-sql or MCP tools with the agent dynamically calls. 
+- Route intent : log an expense, ask about past spending, correct the last expense, record a settlement ("Sam paid me back"). This can be text-to-sql or MCP tools with the agent dynamically calls. 
+- Category: classify the description into one of the fixed categories (see §3). Below the confidence threshold → `other`.
 - Out extracted fieds :
 ```json
 {
@@ -166,10 +216,12 @@ async def audit(utt_id, step, model, inp, fn):
 For each `split_with` phrase:
 1. Exact\Regex or alias match in SQL (`JSON_ARRAY_CONTAINS_STRING(aliases, ?)` or a name match).
 3. A group expands to its members via `group_members`.
-4. **More than one candidate above the threshold** (two Alexes) → write `pending_questions` and return "Alex Chen or Alex Park?"
+4. **More than one candidate above the threshold** (two Alexes) → keep the half-built expense in session state and return "Alex Chen or Alex Park?"
 5. **If not sure** → ask "Who's Jordan? Not in your contacts."
 
 Default: "split with X" **includes me** as an equal participant.
+
+**Clarifying questions live in memory, not the database.** The question and the answer happen in the same session, but they arrive as two separate requests. The server keeps a dict `sessions[session_id] = {draft_expense, open_question}`. The next message in that session answers the question, the draft is completed and saved, and the entry is cleared. A server restart loses an unanswered question, which is acceptable for the demo.
 
 ### Step 3: Math (pure Python)
 ```python

@@ -1,0 +1,7 @@
+fastapi[standard]
+httpx
+pydantic
+python-dotenv
+singlestoredb
+dateparser
+sie-sdk
