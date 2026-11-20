@@ -1,21 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
 import { initials, money, prettyDay } from '../lib/format'
-import type { Receipt, TrailStep } from '../lib/types'
-import { HowSteps } from './Trail'
+import type { Receipt } from '../lib/types'
 
 function loggedTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase()
 }
 
 /** What got logged, in human terms: what, how much, where it's filed, who owes what, when. */
-export function ReceiptCard({ receipt: r, steps, compact }: { receipt: Receipt; steps: TrailStep[]; compact?: boolean }) {
-  const [showHow, setShowHow] = useState(false)
-  const howRef = useRef<HTMLDivElement>(null)
+export function ReceiptCard({ receipt: r, compact }: { receipt: Receipt; compact?: boolean }) {
   const split = r.shares.length > 1
-
-  useEffect(() => {
-    if (showHow) howRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [showHow])
 
   return (
     <article className={`receipt ${compact ? 'compact' : ''}`}>
@@ -25,10 +17,7 @@ export function ReceiptCard({ receipt: r, steps, compact }: { receipt: Receipt; 
       </header>
 
       <div className="rc-tags">
-        <span className={`tag cat-${r.category}`}>
-          <i />
-          {r.category}
-        </span>
+        <span className="tag cat">{r.category}</span>
         {r.group && <span className="tag">{r.group}</span>}
         <span className="tag">{prettyDay(r.spent_on)}</span>
       </div>
@@ -57,21 +46,7 @@ export function ReceiptCard({ receipt: r, steps, compact }: { receipt: Receipt; 
 
       <footer className="rc-foot">
         <span>Logged {loggedTime(r.logged_at)}</span>
-        {steps.length > 0 && (
-          <button onClick={() => setShowHow((v) => !v)} aria-expanded={showHow}>
-            How Tab did it
-            <svg viewBox="0 0 24 24" aria-hidden="true" className={showHow ? 'up' : ''}>
-              <path d="M6 9l6 6 6-6" />
-            </svg>
-          </button>
-        )}
       </footer>
-
-      {showHow && (
-        <div ref={howRef}>
-          <HowSteps steps={steps} />
-        </div>
-      )}
     </article>
   )
 }

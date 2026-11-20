@@ -67,7 +67,7 @@ export function Ledger({ open, onClose, people, history }: Props) {
               {[...history].reverse().map((h, i) => (
                 <section key={h.receipt.logged_at + i}>
                   <p className="h-heard">“{h.heard}”</p>
-                  <ReceiptCard receipt={h.receipt} steps={h.steps} compact />
+                  <ReceiptCard receipt={h.receipt} compact />
                 </section>
               ))}
             </div>

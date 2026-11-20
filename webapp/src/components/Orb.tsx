@@ -16,10 +16,11 @@ export function Orb({ state, levelRef, onTap, label }: Props) {
   useEffect(() => {
     const engine = new OrbEngine(canvasRef.current!)
     const root = document.documentElement.style
-    engine.onHues = ([a, b, c]) => {
+    engine.onHues = ([a, b, c], chroma) => {
       root.setProperty('--h1', a.toFixed(1))
       root.setProperty('--h2', b.toFixed(1))
       root.setProperty('--h3', c.toFixed(1))
+      root.setProperty('--chroma', chroma.toFixed(3))
       engine.setLevel(levelRef.current ?? 0)
     }
     engineRef.current = engine

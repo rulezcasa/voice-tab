@@ -9,22 +9,6 @@ import { cents, fromCents, isoDay } from './lib/format'
 import { DEMO_RUN, HISTORY, PEOPLE } from './lib/sample'
 import type { Activity, OrbState, Person, Receipt, TrailStep } from './lib/types'
 
-const STATUS: Record<OrbState, string> = {
-  idle: '',
-  listening: 'listening',
-  thinking: 'thinking',
-  reply: 'done',
-  ask: 'needs you',
-}
-
-const HINT: Record<OrbState, string> = {
-  idle: 'tap the light and say what you spent',
-  listening: 'tap again when you’re done',
-  thinking: 'working it out',
-  reply: 'tap to say something else',
-  ask: 'pick one, or just say it',
-}
-
 function greeting(name: string) {
   const h = new Date().getHours()
   const part = h < 5 ? 'Late night' : h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : 'Evening'
@@ -139,12 +123,6 @@ export default function App() {
       <header className="top">
         <div className="brand">
           <span className="mark">Tab</span>
-          {orb !== 'idle' && (
-            <span className="status">
-              <i className="status-dot" />
-              {STATUS[orb]}
-            </span>
-          )}
         </div>
         <button className="icon-btn" onClick={() => setSheetOpen(true)} aria-label="Open ledger">
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -168,11 +146,10 @@ export default function App() {
           </p>
         </section>
 
-        {receipt && !running ? <ReceiptCard receipt={receipt} steps={steps} /> : <Progress steps={steps} running={running} />}
+        {receipt && !running ? <ReceiptCard receipt={receipt} /> : <Progress steps={steps} running={running} />}
       </main>
 
       <footer className="dock">
-        <p className="hint">{HINT[orb]}</p>
         <form className="type" onSubmit={onSubmit} autoComplete="off">
           <input
             value={typed}

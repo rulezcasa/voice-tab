@@ -1,9 +1,10 @@
 /* Tab: ambient voice agent. Dark by design; the orb's hues (--h1..3) tint the whole room. */
 
 :root {
-  --h1: 176;
-  --h2: 204;
-  --h3: 252;
+  --h1: 210;
+  --h2: 232;
+  --h3: 280;
+  --chroma: 0.14; /* 0 = silver, 1 = full colour; driven by the orb */
 
   --bg: #07080c;
   --ink: #eceae4;
@@ -71,9 +72,9 @@ button {
   inset: -20%;
   z-index: -2;
   background:
-    radial-gradient(42% 34% at 50% 38%, hsl(var(--h1) 85% 50% / 0.22), transparent 70%),
-    radial-gradient(38% 30% at 20% 80%, hsl(var(--h2) 80% 45% / 0.12), transparent 70%),
-    radial-gradient(40% 32% at 85% 10%, hsl(var(--h3) 80% 50% / 0.12), transparent 70%),
+    radial-gradient(42% 34% at 50% 38%, hsl(var(--h1) calc(85% * var(--chroma) + 6%) 50% / 0.22), transparent 70%),
+    radial-gradient(38% 30% at 20% 80%, hsl(var(--h2) calc(80% * var(--chroma) + 6%) 45% / 0.12), transparent 70%),
+    radial-gradient(40% 32% at 85% 10%, hsl(var(--h3) calc(80% * var(--chroma) + 6%) 50% / 0.12), transparent 70%),
     var(--bg);
   filter: saturate(1.1);
 }
@@ -105,35 +106,9 @@ button {
 
 .mark {
   font-family: var(--serif);
-  font-style: italic;
   font-size: 30px;
   line-height: 1;
   letter-spacing: -0.01em;
-}
-
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: hsl(var(--h1) 90% 65%);
-  box-shadow: 0 0 10px hsl(var(--h1) 90% 60%);
-  animation: blink 2.4s ease-in-out infinite;
-}
-
-[data-state='listening'] .status-dot,
-[data-state='thinking'] .status-dot {
-  animation-duration: 0.8s;
 }
 
 @keyframes blink {
@@ -208,7 +183,7 @@ button {
 }
 
 .talk:focus-visible {
-  outline: 1px solid hsl(var(--h1) 90% 70% / 0.7);
+  outline: 1px solid hsl(var(--h1) calc(90% * var(--chroma) + 6%) 70% / 0.7);
   outline-offset: 10px;
 }
 
@@ -295,7 +270,6 @@ button {
 
 .node.me .node-name {
   font-family: var(--serif);
-  font-style: italic;
   font-size: 15px;
   color: var(--ink);
 }
@@ -305,8 +279,8 @@ button {
 }
 
 .node.bumped .node-dot {
-  box-shadow: 0 0 0 4px hsl(var(--h1) 90% 60% / 0.12), 0 0 22px hsl(var(--h1) 90% 60% / 0.45);
-  border-color: hsl(var(--h1) 90% 70% / 0.7);
+  box-shadow: 0 0 0 4px hsl(var(--h1) calc(90% * var(--chroma) + 6%) 60% / 0.12), 0 0 22px hsl(var(--h1) calc(90% * var(--chroma) + 6%) 60% / 0.45);
+  border-color: hsl(var(--h1) calc(90% * var(--chroma) + 6%) 70% / 0.7);
 }
 
 .node-delta {
@@ -365,7 +339,6 @@ button {
   min-height: 1.4em;
   margin: 0 0 6px;
   font-family: var(--serif);
-  font-style: italic;
   font-size: 16px;
   color: var(--ink-3);
   line-height: 1.35;
@@ -443,7 +416,7 @@ button {
   height: 16px;
   flex: none;
   border-radius: 50%;
-  background: hsl(var(--h1) 80% 70% / 0.16);
+  background: hsl(var(--h1) calc(80% * var(--chroma) + 6%) 70% / 0.16);
   position: relative;
 }
 
@@ -454,7 +427,7 @@ button {
   top: 3.5px;
   width: 4px;
   height: 7px;
-  border: solid hsl(var(--h1) 85% 75%);
+  border: solid hsl(var(--h1) calc(85% * var(--chroma) + 6%) 75%);
   border-width: 0 1.5px 1.5px 0;
   rotate: 45deg;
 }
@@ -464,7 +437,7 @@ button {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: hsl(var(--h1) 80% 70%);
+  background: hsl(var(--h1) calc(80% * var(--chroma) + 6%) 70%);
   animation: blink 0.9s ease-in-out infinite;
 }
 
@@ -546,7 +519,6 @@ button {
 .tag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   height: 24px;
   padding: 0 10px;
   border-radius: 999px;
@@ -556,28 +528,9 @@ button {
   border: 1px solid var(--line);
 }
 
-.tag i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--cat, var(--ink-3));
-}
-
-.tag[class*='cat-'] {
+.tag.cat {
   text-transform: capitalize;
 }
-
-.cat-groceries { --cat: #8ee07a; }
-.cat-dining { --cat: #ffb86b; }
-.cat-transport { --cat: #6bb8ff; }
-.cat-rent { --cat: #c79bff; }
-.cat-utilities { --cat: #ffd36b; }
-.cat-household { --cat: #7fe0d6; }
-.cat-shopping { --cat: #ff8fc7; }
-.cat-entertainment { --cat: #ff7f7f; }
-.cat-travel { --cat: #7fa8ff; }
-.cat-health { --cat: #8fffb0; }
-.cat-subscriptions { --cat: #b0a4ff; }
 
 .rc-shares {
   list-style: none;
@@ -613,10 +566,9 @@ button {
 .av.me {
   text-transform: none;
   font-family: var(--serif);
-  font-style: italic;
   font-size: 12px;
   color: var(--ink);
-  border-color: hsl(var(--h1) 80% 70% / 0.4);
+  border-color: hsl(var(--h1) calc(80% * var(--chroma) + 6%) 70% / 0.4);
 }
 
 .rc-what {
@@ -642,93 +594,11 @@ button {
 }
 
 .rc-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin-top: 14px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
   font-size: 12px;
   color: var(--ink-3);
-}
-
-.rc-foot button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--ink-2);
-}
-
-.rc-foot svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  transition: rotate 0.25s;
-}
-
-.rc-foot svg.up {
-  rotate: 180deg;
-}
-
-/* the technical view, folded away */
-
-.how {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 0;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  animation: step-in 0.4s var(--ease) both;
-}
-
-.how li {
-  display: grid;
-  grid-template-columns: 72px 1fr auto 44px;
-  gap: 8px;
-  padding: 4px 0;
-  border-top: 1px solid var(--line);
-  color: var(--ink-3);
-}
-
-.how-step {
-  color: hsl(var(--h1) 75% 75%);
-}
-
-.how-detail {
-  color: var(--ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.how-model {
-  max-width: 110px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.how-ms {
-  text-align: right;
-}
-
-.how .how-total {
-  display: flex;
-  justify-content: space-between;
-  color: var(--ink-2);
-}
-
-@media (max-width: 380px) {
-  .how-model {
-    display: none;
-  }
-
-  .how li {
-    grid-template-columns: 72px 1fr 44px;
-  }
 }
 
 /* a card on screen: the orb steps back to make room */
@@ -778,15 +648,6 @@ button {
   padding-top: 10px;
 }
 
-.hint {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
 .type {
   width: 100%;
   display: flex;
@@ -802,7 +663,7 @@ button {
 }
 
 .type:focus-within {
-  border-color: hsl(var(--h1) 80% 70% / 0.35);
+  border-color: hsl(var(--h1) calc(80% * var(--chroma) + 6%) 70% / 0.35);
 }
 
 .type input {
@@ -827,7 +688,7 @@ button {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: hsl(var(--h1) 85% 70%);
+  background: hsl(var(--h1) calc(85% * var(--chroma) + 6%) 70%);
   color: #0b0c10;
   transition: opacity 0.2s, transform 0.2s;
 }
@@ -1030,7 +891,6 @@ button {
 .h-heard {
   margin: 0 0 8px;
   font-family: var(--serif);
-  font-style: italic;
   font-size: 17px;
   color: var(--ink-2);
 }
@@ -1039,7 +899,6 @@ button {
   margin: 40px 0;
   text-align: center;
   font-family: var(--serif);
-  font-style: italic;
   font-size: 18px;
   color: var(--ink-3);
 }

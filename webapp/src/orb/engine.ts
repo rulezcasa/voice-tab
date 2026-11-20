@@ -1,16 +1,18 @@
-// Canvas renderer for the orb. Three soft, noise-deformed blobs blended additively,
-// with a halo, voice ripples and "thinking" particles. Everything eases toward the
+// Canvas renderer for the orb: a silver, glassy sphere. Three soft, noise-deformed blobs
+// blended additively, an iridescent rim, a halo, voice ripples and "thinking" particles.
+// Colour is mostly drained out (silver); states bring back a little iridescent tint. Everything eases toward the
 // target for the current state, so state changes morph instead of jumping.
 import type { OrbState } from '../lib/types'
 
 type Hues = [number, number, number]
 
+// iridescent tints that show through the silver: cyan, blue, violet, pink
 const PALETTE: Record<OrbState, Hues> = {
-  idle: [176, 204, 252],
-  listening: [12, 34, 346],
-  thinking: [266, 226, 298],
-  reply: [150, 172, 198],
-  ask: [38, 52, 18],
+  idle: [210, 232, 280],
+  listening: [196, 322, 256],
+  thinking: [268, 222, 318],
+  reply: [210, 232, 280], // same silver as idle
+  ask: [34, 338, 18],
 }
 
 interface Feel {
@@ -18,14 +20,15 @@ interface Feel {
   scale: number // size relative to base radius
   speed: number // animation speed
   think: number // 0..1 orbiting particles
+  chroma: number // 0 = pure silver, 1 = fully coloured
 }
 
 const FEEL: Record<OrbState, Feel> = {
-  idle: { energy: 0.05, scale: 1, speed: 0.55, think: 0 },
-  listening: { energy: 0.1, scale: 1.05, speed: 1.05, think: 0 },
-  thinking: { energy: 0.16, scale: 0.84, speed: 1.9, think: 1 },
-  reply: { energy: 0.08, scale: 1.02, speed: 0.75, think: 0 },
-  ask: { energy: 0.12, scale: 0.98, speed: 0.9, think: 0 },
+  idle: { energy: 0.05, scale: 1, speed: 0.55, think: 0, chroma: 0.14 },
+  listening: { energy: 0.1, scale: 1.05, speed: 1.05, think: 0, chroma: 0.5 },
+  thinking: { energy: 0.16, scale: 0.84, speed: 1.9, think: 1, chroma: 0.55 },
+  reply: { energy: 0.08, scale: 1.02, speed: 0.75, think: 0, chroma: 0.14 },
+  ask: { energy: 0.12, scale: 0.98, speed: 0.9, think: 0, chroma: 0.45 },
 }
 
 const TAU = Math.PI * 2
@@ -38,7 +41,7 @@ function lerpHue(a: number, b: number, k: number) {
 }
 
 export class OrbEngine {
-  onHues?: (h: Hues) => void
+  onHues?: (h: Hues, chroma: number) => void
 
   private canvas: HTMLCanvasElement
   private ctx: CanvasRenderingContext2D
@@ -129,7 +132,7 @@ export class OrbEngine {
       rp.a *= Math.exp(-dt * 1.6)
     }
     this.ripples = this.ripples.filter((rp) => rp.a > 0.01 && rp.r < 1.75)
-    this.onHues?.(this.hues)
+    this.onHues?.(this.hues, this.feel.chroma)
   }
 
   private draw() {
@@ -142,15 +145,17 @@ export class OrbEngine {
     const scale = feel.scale * breathe + level * 0.2
     const amp = (0.03 + feel.energy * 0.35 + level * 0.45) * motion
     const [h0, h1, h2] = this.hues
+    const c = feel.chroma + level * 0.25 // voice brings colour up a touch
+    const sat = (x: number) => (x * Math.min(1, c)).toFixed(1) // scale a full saturation down toward silver
 
     ctx.clearRect(0, 0, w, h)
     ctx.globalCompositeOperation = 'lighter'
 
     // halo
     const halo = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 2.05)
-    halo.addColorStop(0, `hsla(${h0}, 90%, 60%, ${0.2 + level * 0.15})`)
-    halo.addColorStop(0.5, `hsla(${h1}, 90%, 55%, 0.06)`)
-    halo.addColorStop(1, `hsla(${h1}, 90%, 50%, 0)`)
+    halo.addColorStop(0, `hsla(${h0}, ${sat(90)}%, 70%, ${0.14 + level * 0.15})`)
+    halo.addColorStop(0.5, `hsla(${h1}, ${sat(90)}%, 62%, 0.05)`)
+    halo.addColorStop(1, `hsla(${h1}, ${sat(90)}%, 55%, 0)`)
     ctx.fillStyle = halo
     ctx.fillRect(0, 0, w, h)
 
@@ -158,7 +163,7 @@ export class OrbEngine {
     for (const rp of this.ripples) {
       ctx.beginPath()
       ctx.arc(cx, cy, R * scale * rp.r, 0, TAU)
-      ctx.strokeStyle = `hsla(${h1}, 95%, 70%, ${rp.a})`
+      ctx.strokeStyle = `hsla(${h1}, ${sat(95)}%, 82%, ${rp.a})`
       ctx.lineWidth = 1.25
       ctx.stroke()
     }
@@ -180,27 +185,42 @@ export class OrbEngine {
         pts.push([cx + ox + Math.cos(t) * r, cy + oy + Math.sin(t) * r])
       }
       const g = ctx.createRadialGradient(cx - rr * 0.35, cy - rr * 0.4, 0, cx, cy, rr * 1.25)
-      g.addColorStop(0, `hsla(${hues[i]}, 95%, 72%, 0.75)`)
-      g.addColorStop(0.55, `hsla(${hues[(i + 1) % 3]}, 90%, 55%, 0.32)`)
-      g.addColorStop(1, `hsla(${hues[(i + 2) % 3]}, 90%, 45%, 0)`)
+      g.addColorStop(0, `hsla(${hues[i]}, ${sat(95)}%, 80%, 0.5)`)
+      g.addColorStop(0.55, `hsla(${hues[(i + 1) % 3]}, ${sat(90)}%, 58%, 0.24)`)
+      g.addColorStop(1, `hsla(${hues[(i + 2) % 3]}, ${sat(90)}%, 45%, 0)`)
       ctx.fillStyle = g
-      ctx.beginPath()
+      const path = new Path2D()
       const mid = (a: [number, number], b: [number, number]) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as const
       const start = mid(pts[POINTS - 1], pts[0])
-      ctx.moveTo(start[0], start[1])
+      path.moveTo(start[0], start[1])
       for (let j = 0; j < POINTS; j++) {
         const p = pts[j]
         const m = mid(p, pts[(j + 1) % POINTS])
-        ctx.quadraticCurveTo(p[0], p[1], m[0], m[1])
+        path.quadraticCurveTo(p[0], p[1], m[0], m[1])
       }
-      ctx.fill()
+      path.closePath()
+      ctx.fill(path)
     }
 
-    // bright core
-    const core = ctx.createRadialGradient(cx - R * 0.15, cy - R * 0.2, 0, cx, cy, R * 0.9)
-    core.addColorStop(0, `hsla(${h0}, 100%, 92%, ${0.16 + level * 0.22})`)
-    core.addColorStop(1, `hsla(${h0}, 100%, 80%, 0)`)
-    ctx.fillStyle = core
+    // iridescent rim: a thin glassy edge that always carries a little colour, like polished metal
+    const rimC = Math.max(c, 0.35)
+    const rim = ctx.createConicGradient(phase * 0.4, cx, cy)
+    const rimHues = [h0, 330, h1, 200, h2, h0]
+    rimHues.forEach((hu, k) => rim.addColorStop(k / (rimHues.length - 1), `hsla(${hu}, ${(90 * rimC).toFixed(1)}%, 78%, 0.55)`))
+    ctx.strokeStyle = rim
+    ctx.lineWidth = R * 0.035
+    ctx.filter = `blur(${(R * 0.03).toFixed(1)}px)`
+    ctx.beginPath()
+    ctx.arc(cx, cy, R * scale * 0.98, 0, TAU) // a clean circle frames the wobbling body
+    ctx.stroke()
+    ctx.filter = 'none'
+
+    // specular highlight, top-left, for the glass/chrome look
+    const spec = ctx.createRadialGradient(cx - R * 0.28, cy - R * 0.34, 0, cx - R * 0.2, cy - R * 0.25, R * 0.8)
+    spec.addColorStop(0, `hsla(${h0}, ${sat(40)}%, 96%, ${0.12 + level * 0.15})`)
+    spec.addColorStop(0.5, `hsla(${h0}, ${sat(40)}%, 90%, 0.04)`)
+    spec.addColorStop(1, `hsla(${h0}, ${sat(40)}%, 85%, 0)`)
+    ctx.fillStyle = spec
     ctx.beginPath()
     ctx.arc(cx, cy, R * scale, 0, TAU)
     ctx.fill()
@@ -214,7 +234,7 @@ export class OrbEngine {
         const size = 1 + (i % 3) * 0.6
         ctx.beginPath()
         ctx.arc(cx + Math.cos(a) * pr, cy + Math.sin(a) * pr, size, 0, TAU)
-        ctx.fillStyle = `hsla(${hues[i % 3]}, 95%, 75%, ${feel.think * (0.35 + 0.4 * Math.sin(this.clock * 3 + i) ** 2)})`
+        ctx.fillStyle = `hsla(${hues[i % 3]}, ${sat(95)}%, 85%, ${feel.think * (0.35 + 0.4 * Math.sin(this.clock * 3 + i) ** 2)})`
         ctx.fill()
       }
     }
