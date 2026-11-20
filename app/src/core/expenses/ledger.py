@@ -5,6 +5,8 @@ from functools import cache
 from zoneinfo import ZoneInfo
 
 from src import config
+from src.core import live
+from src.core.expenses import settle
 from src.core.expenses.categories import ALL_CATEGORIES, SETTLEMENT
 from src.core.expenses.splits import Share, SplitError, build_shares, settlement_shares, to_money
 from src.db.s2_client import cursor, to_vector, transaction
@@ -115,7 +117,7 @@ def balances_for(person_ids: list[int]) -> dict[int, str]:
 
 _EXPENSE_COLS = (
     "SELECT e.id, e.created_at, e.spent_on, e.amount, e.currency, e.description,"
-    " e.merchant, e.category, e.group_id, e.status, e.is_demo, g.name AS group_name"
+    " e.merchant, e.category, e.group_id, e.meetup_id, e.status, e.is_demo, g.name AS group_name"
     " FROM expenses e LEFT JOIN groups_ g ON g.id = e.group_id"
 )
 
@@ -179,8 +181,9 @@ def create_expense(
     payer_id: int | None = None, participant_ids: list[int] | None = None,
     custom: dict[int, object] | None = None, spent_on: date | None = None,
     merchant: str | None = None, currency: str | None = None, group_id: int | None = None,
+    meetup_id: int | None = None,
 ) -> dict:
-    """Save a purchase. Defaults: I paid, it's just mine, dated today."""
+    """Save a purchase. Defaults: I paid, it's just mine, dated today. meetup_id links it to a confirmed meetup."""
     me = me_id()
     payer = payer_id or me
     participants = participant_ids or [me]
@@ -195,14 +198,14 @@ def create_expense(
         _check_group(cur, group_id)
         cur.execute(
             "INSERT INTO expenses (spent_on, amount, currency, description, merchant,"
-            " category, group_id, status, embedding)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, 'logged', %s)",
+            " category, group_id, meetup_id, status, embedding)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'logged', %s)",
             (spent_on, total, (currency or config.DEFAULT_CURRENCY).upper()[:3],
-             description, merchant, category, group_id, vec),
+             description, merchant, category, group_id, meetup_id, vec),
         )
         expense_id = cur.lastrowid
         _insert_shares(cur, expense_id, shares)
-    return _result(expense_id)
+    return _result(expense_id, "created")
 
 
 def update_expense(
@@ -244,7 +247,7 @@ def update_expense(
             fields.get("merchant", old["merchant"]),
         )
     if not fields and shares is None:
-        return _result(expense_id)
+        return _result(expense_id, publish=False)
 
     with transaction() as cur:
         if shares:
@@ -256,7 +259,7 @@ def update_expense(
         if shares:
             cur.execute("DELETE FROM expense_shares WHERE expense_id = %s", (expense_id,))
             _insert_shares(cur, expense_id, shares)
-    return _result(expense_id)
+    return _result(expense_id, "updated")
 
 
 def record_settlement(
@@ -290,7 +293,7 @@ def record_settlement(
         )
         expense_id = cur.lastrowid
         _insert_shares(cur, expense_id, shares)
-    return _result(expense_id)
+    return _result(expense_id, "settled")
 
 
 def delete_expense(expense_id: int) -> dict:
@@ -300,9 +303,41 @@ def delete_expense(expense_id: int) -> dict:
         cur.execute("DELETE FROM expense_shares WHERE expense_id = %s", (expense_id,))
         cur.execute("DELETE FROM expenses WHERE id = %s", (expense_id,))
     people = [s["person_id"] for s in old["shares"]]
+    live.publish({"type": "ledger", "action": "deleted", "expense": old, "people": balances()})
     return {"deleted": old, "balances": balances_for(people)}
 
 
-def _result(expense_id: int) -> dict:
+def _result(expense_id: int, action: str = "", publish: bool = True) -> dict:
     e = get_expense(expense_id)
+    if publish:
+        live.publish({"type": "ledger", "action": action, "expense": e, "people": balances()})
     return {"expense": e, "balances": balances_for([s["person_id"] for s in e["shares"]])}
+
+
+# ---------- who owes whom ----------
+
+def owes_summary(person_id: int | None = None) -> dict:
+    """One person's balance, who they owe and who owes them (netted per pair), plus the
+    fewest transfers that would settle the whole ledger. Default person: me."""
+    pid = person_id or me_id()
+    with cursor() as cur:
+        cur.execute("SELECT expense_id, person_id, paid, owed FROM expense_shares")
+        shares = [{"expense_id": e, "person_id": p, "paid": pd, "owed": o} for e, p, pd, o in cur.fetchall()]
+    people = balances()
+    names = {p["id"]: p["name"] for p in people}
+    if pid not in names:
+        raise LedgerError(f"unknown person id: {pid}")
+    pairs = settle.pairwise(shares)
+    nets = {p["id"]: Decimal(p["net"]) for p in people}
+    return {
+        "person_id": pid,
+        "name": names[pid],
+        "net": _money(nets[pid]),
+        "owes": [{"person_id": d["to"], "name": names.get(d["to"]), "amount": _money(d["amount"])}
+                 for d in pairs if d["from"] == pid],
+        "owed_by": [{"person_id": d["from"], "name": names.get(d["from"]), "amount": _money(d["amount"])}
+                    for d in pairs if d["to"] == pid],
+        "suggested_transfers": [
+            {"from_id": t["from"], "from": names.get(t["from"]), "to_id": t["to"], "to": names.get(t["to"]),
+             "amount": _money(t["amount"])} for t in settle.suggest_transfers(nets)],
+    }
