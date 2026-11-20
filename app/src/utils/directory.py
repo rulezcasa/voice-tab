@@ -1,6 +1,6 @@
 """People and groups, so names the user says can be turned into ids."""
 from src.db.s2_client import cursor
-from src.utils.sql import rows_as_dicts
+from src.utils.query import rows_as_dicts
 
 
 def people() -> list[dict]:

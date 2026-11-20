@@ -9,7 +9,7 @@ from src.core.expenses.categories import ALL_CATEGORIES, SETTLEMENT
 from src.core.expenses.splits import Share, SplitError, build_shares, settlement_shares, to_money
 from src.db.s2_client import cursor, to_vector, transaction
 from src.model.embeddings import embed, expense_embed_text
-from src.utils.sql import rows_as_dicts
+from src.utils.query import rows_as_dicts
 
 
 class LedgerError(ValueError):

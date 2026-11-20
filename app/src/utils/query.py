@@ -1,4 +1,5 @@
-"""Read-only SQL for the agent's questions ("how much did I spend on cabs last month?")."""
+"""SQL helpers: read-only queries for the agent's questions ("how much did I spend on cabs last month?") and row decoding."""
+import json
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -14,6 +15,19 @@ _FORBIDDEN = re.compile(
     r"call|set|lock|unlock|handler|do|sleep|benchmark|kill|outfile|dumpfile|attach|detach)\b",
     re.I,
 )
+
+
+def rows_as_dicts(cur, json_cols: tuple[str, ...] = ()) -> list[dict]:
+    """Fetch all rows as dicts; parse the named JSON columns if they came back as strings."""
+    names = [d[0] for d in cur.description]
+    out = []
+    for r in cur.fetchall():
+        row = dict(zip(names, r))
+        for k in json_cols:
+            if isinstance(row.get(k), str):
+                row[k] = json.loads(row[k])
+        out.append(row)
+    return out
 
 
 class QueryError(ValueError):
