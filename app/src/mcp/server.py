@@ -7,6 +7,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from src.agents.prompts import system_prompt
+from src.core import dates
+from src.core.dates import DateError, When
 from src.core.expenses import ledger
 from src.core.expenses.category import classify
 from src.utils import query
@@ -45,9 +47,21 @@ def system() -> str:
 
 # ---------- questions ----------
 
+def _day(when: When | None) -> date:
+    """The expense's day from the agent's `when` (today if it gave none)."""
+    try:
+        return dates.resolve_day(when, ledger.today())
+    except DateError as e:
+        raise ledger.LedgerError(str(e)) from e
+
+
 @tool(name="query")
-def query_ledger(sql: str, search: str | None = None) -> dict:
-    """Run one read-only SELECT against the ledger (schema in the system prompt). Returns columns and up to 200 rows. To rank by meaning, pass `search` (e.g. "uber") and use DOT_PRODUCT(e.embedding, :search) in the SQL."""
+def query_ledger(sql: str, search: str | None = None, when: When | None = None) -> dict:
+    """Run one read-only SELECT against the ledger (schema in the system prompt). Returns columns and up to 200 rows. To rank by meaning, pass `search` (e.g. "uber") and use DOT_PRODUCT(e.embedding, :search) in the SQL. For a time period, pass `when` and write `e.spent_on BETWEEN :start AND :end`; never write dates yourself."""
+    try:
+        sql = dates.fill_range(sql, when, ledger.today())
+    except DateError as e:
+        raise query.QueryError(str(e)) from e
     return query.run(sql, search)
 
 
@@ -64,11 +78,11 @@ _NOT_A_DESCRIPTION = re.compile(r"[$€£₹\d]|\b(spent|spend|paid|bucks|dollar
 
 @tool()
 def log_expense(
-    amount: str, description: str, category: str | None = None, merchant: str | None = None,
-    spent_on: date | None = None, payer_id: int | None = None, participant_ids: list[int] | None = None,
+    amount: str, description: str, when: When | None = None, category: str | None = None,
+    merchant: str | None = None, payer_id: int | None = None, participant_ids: list[int] | None = None,
     custom: dict[int, str] | None = None, group_id: int | None = None, currency: str | None = None,
 ) -> dict:
-    """Save a purchase. Defaults: I paid, only I owe, today, category picked from the description. participant_ids = everyone who owes a share (include me if I'm in on it); custom = {person_id: exact owed} for uneven splits."""
+    """Save a purchase. Defaults: I paid, only I owe, today, category picked from the description. when = the day as the user said it ("yesterday" -> {"days_ago": 1}); leave it out for today. participant_ids = everyone who owes a share (include me if I'm in on it); custom = {person_id: exact owed} for uneven splits."""
     if _NOT_A_DESCRIPTION.search(description or ""):
         raise ledger.LedgerError(
             f"'{description}' is the user's sentence, not what was bought. Don't log yet: "
@@ -76,7 +90,7 @@ def log_expense(
         )
     return ledger.create_expense(
         amount=amount, description=description, category=category or _category(description, merchant),
-        merchant=merchant, spent_on=spent_on, payer_id=payer_id, participant_ids=participant_ids,
+        merchant=merchant, spent_on=_day(when), payer_id=payer_id, participant_ids=participant_ids,
         custom=custom, group_id=group_id, currency=currency,
     )
 
@@ -84,25 +98,25 @@ def log_expense(
 @tool()
 def edit_expense(
     expense_id: int, amount: str | None = None, description: str | None = None,
-    category: str | None = None, merchant: str | None = None, spent_on: date | None = None,
+    category: str | None = None, merchant: str | None = None, when: When | None = None,
     payer_id: int | None = None, participant_ids: list[int] | None = None,
     custom: dict[int, str] | None = None, group_id: int | None = None,
 ) -> dict:
-    """Change an expense; omitted fields keep their value. Shares are rebuilt when amount, payer or people change."""
+    """Change an expense; omitted fields keep their value. Pass `when` only to change the day. Shares are rebuilt when amount, payer or people change."""
     return ledger.update_expense(
         expense_id, amount=amount, description=description, category=category, merchant=merchant,
-        spent_on=spent_on, payer_id=payer_id, participant_ids=participant_ids, custom=custom,
+        spent_on=_day(when) if when else None, payer_id=payer_id, participant_ids=participant_ids, custom=custom,
         group_id=group_id,
     )
 
 
 @tool()
 def record_settlement(
-    amount: str, from_id: int, to_id: int | None = None, group_id: int | None = None, spent_on: date | None = None,
+    amount: str, from_id: int, to_id: int | None = None, group_id: int | None = None, when: When | None = None,
 ) -> dict:
-    """from_id paid to_id (default: me) back, e.g. 'Sam paid me back 13.33'."""
+    """from_id paid to_id (default: me) back, e.g. 'Sam paid me back 13.33'. when = the day, leave it out for today."""
     return ledger.record_settlement(
-        amount=amount, from_id=from_id, to_id=to_id, group_id=group_id, spent_on=spent_on,
+        amount=amount, from_id=from_id, to_id=to_id, group_id=group_id, spent_on=_day(when),
     )
 
 

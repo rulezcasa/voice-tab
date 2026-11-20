@@ -19,9 +19,29 @@ def _trim(history: list[dict]) -> list[dict]:
     return history[starts[-KEEP_TURNS]:] if len(starts) > KEEP_TURNS else history
 
 
+def _inline(schema: dict) -> dict:
+    """Replace $ref with the definition and `X or null` with X, so a small model sees one flat schema."""
+    defs = schema.get("$defs", {})
+
+    def walk(node):
+        if isinstance(node, list):
+            return [walk(n) for n in node]
+        if not isinstance(node, dict):
+            return node
+        if "$ref" in node:
+            return walk(defs[node["$ref"].rsplit("/", 1)[-1]])
+        opts = node.get("anyOf")
+        if opts and len(opts) == 2 and {"type": "null"} in opts:
+            rest = {k: v for k, v in node.items() if k != "anyOf"}
+            return {**walk(next(o for o in opts if o != {"type": "null"})), **walk(rest)}
+        return {k: walk(v) for k, v in node.items() if k != "$defs"}
+
+    return walk(schema)
+
+
 async def _tools() -> list[dict]:
     return [
-        {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.input_schema}}
+        {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": _inline(t.input_schema)}}
         for t in await mcp.list_tools()
     ]
 
