@@ -14,7 +14,7 @@
  │   (TBD)      │                 │  1 transcribe ─▶ 2 route intent ─┬─▶ LOG   ─▶ 3 extract ─▶ 4 resolve│
  └──────────────┘                 │                                  │           people ─▶ 5 math ─▶    │
         ▲                         │                                  │           6 confidence gate ─▶   │
-        │ answer / question       │                                  │           7 Splitwise ─▶ 8 save  │
+        │ answer / question       │                                  │           7 save ─▶ 8 balances   │
         └──────────────────────── │                                  ├─▶ QUERY ─▶ filters + vector ─▶   │
                                   │                                  │           rerank ─▶ answer       │
                                   │                                  └─▶ EDIT  ─▶ update last expense   │
@@ -24,13 +24,12 @@
                                        Superlinked SIE (models)          SingleStore (people, groups,
                                        whisper · gliclass · gliner2      expenses, shares, audit_events,
                                        bge-m3 · reranker · qwen          vectors + full-text)
-                                                                                  │
-                                                                         Splitwise API
 ```
 
 **Design rules**
-- **Models extract and classify; code decides.** Money math, date math and the Splitwise payload are deterministic Python.
+- **Models extract and classify; code decides.** Money math, date math and balances are deterministic Python.
 - **Never guess a person or an amount.** Low confidence or ambiguity means a clarifying question, not a guess.
+- **We own the ledger.** No Splitwise or other outside expense service. Expenses, shares and balances live in our own SingleStore tables.
 - **Everything leaves a trace.** Each step writes an `audit_events` row *before* returning.
 
 ---
@@ -52,9 +51,6 @@
 SIE_BASE_URL=...
 SIE_API_KEY=...
 S2_HOST=...  S2_USER=...  S2_PASSWORD=...  S2_DB=tab
-SPLITWISE_API_KEY=...
-SPLITWISE_GROUP_ID=...
-ME_SPLITWISE_ID=...
 TZ=America/Los_Angeles
 ```
 
@@ -67,7 +63,7 @@ TZ=America/Los_Angeles
 CREATE TABLE people (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
   name          VARCHAR(100),
-  splitwise_id  BIGINT,
+  is_me         BOOLEAN DEFAULT FALSE,      -- the account owner
   aliases       JSON,                       -- ["Sammy","S"]
   embedding     VECTOR(1024)
 );
@@ -75,7 +71,6 @@ CREATE TABLE people (
 CREATE TABLE groups_ (
   id                 BIGINT AUTO_INCREMENT PRIMARY KEY,
   name               VARCHAR(100),          -- "Apt 4B"
-  splitwise_group_id BIGINT,
   aliases            JSON,                  -- ["roommates","roomies","flatmates","the apartment"]
   embedding          VECTOR(1024)
 );
@@ -100,7 +95,7 @@ CREATE TABLE expenses (
   merchant              VARCHAR(120),
   category              VARCHAR(40),    -- fixed set of categories (groceries, transport etc) 
   group_id              BIGINT NULL,        -- NULL = personal
-  status                VARCHAR(20),        -- logged | posted | needs_clarification | failed
+  status                VARCHAR(20),        -- logged | needs_clarification | failed
   embedding             VECTOR(1024),
   FULLTEXT USING VERSION 2 (description, merchant)
 );
@@ -110,11 +105,17 @@ CREATE TABLE expense_shares (
   PRIMARY KEY (expense_id, person_id)
 );
 
+-- Balances are computed, not stored: SUM(paid - owed) per person from expense_shares.
+-- Positive = they are owed money, negative = they owe.
+CREATE VIEW balances AS
+  SELECT person_id, SUM(paid - owed) AS net
+  FROM expense_shares GROUP BY person_id;
+
 CREATE TABLE audit_events (
   id            BIGINT AUTO_INCREMENT PRIMARY KEY,
   utterance_id  BIGINT,
   expense_id    BIGINT NULL,
-  step          VARCHAR(40),                -- transcribe | route | extract | resolve | math | gate | splitwise | store | query
+  step          VARCHAR(40),                -- transcribe | route | extract | resolve | math | gate | store | balances | query
   model         VARCHAR(80) NULL,
   input         JSON,
   output        JSON,
@@ -126,7 +127,7 @@ CREATE TABLE audit_events (
 ```
 
 **Seed script** (`seed.py`):
-- Insert yourself, the teammates and two Alexes (Chen, Park) into `people`, with aliases and embeddings.
+- Insert yourself (`is_me = TRUE`), the teammates and two Alexes (Chen, Park) into `people`, with aliases and embeddings.
 - Insert group "Apt 4B" 
 - Insert about 30 **demo** expenses over the past 3 weeks so recall queries have data. Include a $20 cab last Wednesday and a few Uber/Lyft rides. Label them as demo data.
 
