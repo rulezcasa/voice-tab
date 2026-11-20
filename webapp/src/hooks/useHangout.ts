@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import * as api from '../lib/api'
 import { centroid, distance, reachMetres } from '../lib/geo'
-import type { GroupBalance, HangoutMember, HangoutResult, LngLat, PlaceKind } from '../lib/types'
+import type { GroupBalance, HangoutMember, HangoutPlace, HangoutResult, LngLat, PlaceKind } from '../lib/types'
 
 /** Per-person colours on the map and in the panel; "you" always get the first. */
 export const MEMBER_COLORS = ['#3d7bff', '#10a87a', '#ff6a2b', '#9a4dff', '#e0a400', '#ec3f86', '#0ea0c6', '#5aa521']
@@ -95,6 +95,35 @@ export function useHangout() {
     }
   }
 
+  /** Ask-the-agents mode: show each person at the rough area their agent shares (never their exact home).
+   *  People no longer in the plan (they dropped out) are hidden. */
+  const showAgentPeople = useCallback((shared: { person_id: number; area: [number, number]; mode: string }[]) => {
+    const at = new Map(shared.map((s) => [s.person_id, s]))
+    setMembers((ms) =>
+      ms.map((m) => {
+        const s = at.get(m.person_id)
+        if (!s) return { ...m, going: false, location: null, approx: false }
+        const mode = (['walk', 'bike', 'drive'].includes(s.mode) ? s.mode : 'walk') as HangoutMember['mode']
+        return { ...m, going: true, approx: true, mode, location: [s.area[1], s.area[0]] }
+      }),
+    )
+  }, [])
+
+  /** Leaving ask-the-agents mode: drop the approximate pins and the agreed place. */
+  const clearAgentPeople = useCallback(() => {
+    setMembers((ms) => ms.map((m) => (m.approx ? { ...m, approx: false, location: null, going: true } : m)))
+    setResult(null)
+    setSelected(null)
+    setStatus('idle')
+  }, [])
+
+  /** The agents agreed on a place: put it on the map as the only result and focus it. */
+  const showAgreed = useCallback((place: HangoutPlace) => {
+    setResult({ meeting_point: place.location, places: [place], agreed: true })
+    setSelected(place.id)
+    setStatus('done')
+  }, [])
+
   const colorOf = (id: number) => {
     const i = members.findIndex((m) => m.person_id === id)
     return MEMBER_COLORS[(i < 0 ? 0 : i) % MEMBER_COLORS.length]
@@ -105,7 +134,7 @@ export function useHangout() {
     members, going, outOfReach, update, colorOf,
     placing, setPlacing, place,
     kinds, toggleKind, note, setNote,
-    ready, search, status, error, result, selected, setSelected, clearResult,
+    ready, search, status, error, result, selected, setSelected, clearResult, showAgreed, showAgentPeople, clearAgentPeople,
   }
 }
 

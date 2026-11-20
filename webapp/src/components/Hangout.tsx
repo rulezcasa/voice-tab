@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Hangout as HangoutState } from '../hooks/useHangout'
 import { figureOf, KIND_EMOJI } from '../lib/emoji'
+import { AgentsTalk } from './AgentsTalk'
 import { money } from '../lib/format'
 import type { HangoutMember, PlaceKind, TravelMode } from '../lib/types'
 
@@ -28,6 +29,7 @@ interface Props {
 /** Side panel (bottom sheet on phones): pick a group, set everyone's budget and reach, find places. */
 export function Hangout({ open, onClose, hangout: h }: Props) {
   const { loadGroups } = h
+  const [mode, setMode] = useState<'plan' | 'agents'>('plan') // plan it here, or let everyone's agents decide
   useEffect(() => {
     if (open) loadGroups()
   }, [open, loadGroups])
@@ -82,7 +84,30 @@ export function Hangout({ open, onClose, hangout: h }: Props) {
           </div>
         </section>
 
-        {h.members.length > 0 && (
+        {h.groupId !== null && (
+          <section>
+            <p className="pick-label">How</p>
+            <div className="chips">
+              <button className={`chip ${mode === 'plan' ? 'on' : ''}`} onClick={() => { if (mode !== 'plan') h.clearAgentPeople(); setMode('plan') }}>
+                Plan it here
+              </button>
+              <button className={`chip ${mode === 'agents' ? 'on' : ''}`} onClick={() => setMode('agents')}>
+                Ask your friends' agents
+              </button>
+            </div>
+          </section>
+        )}
+
+        {mode === 'agents' && h.groupId !== null && (
+          <AgentsTalk
+            groupId={h.groupId}
+            members={h.members.map((m) => ({ id: m.person_id, name: m.name, is_me: m.is_me }))}
+            onAgreed={h.showAgreed}
+            onPeople={h.showAgentPeople}
+          />
+        )}
+
+        {mode === 'plan' && h.members.length > 0 && (
           <section>
             <p className="pick-label">
               Who's going <span>· {h.going.length} of {h.members.length}</span>
@@ -95,7 +120,7 @@ export function Hangout({ open, onClose, hangout: h }: Props) {
           </section>
         )}
 
-        {h.members.length > 0 && (
+        {mode === 'plan' && h.members.length > 0 && (
           <section>
             <p className="pick-label">Looking for</p>
             <div className="chips">
@@ -115,7 +140,7 @@ export function Hangout({ open, onClose, hangout: h }: Props) {
           </section>
         )}
 
-        {h.status === 'done' && h.result && (
+        {mode === 'plan' && h.status === 'done' && h.result && (
           <section className="hg-results" ref={results}>
             <p className="pick-label">
               Suggestions <span>· {h.result.places.length}</span>
@@ -156,10 +181,10 @@ export function Hangout({ open, onClose, hangout: h }: Props) {
             </ol>
           </section>
         )}
-        {h.status === 'error' && <p className="form-error">{h.error}</p>}
+        {mode === 'plan' && h.status === 'error' && <p className="form-error">{h.error}</p>}
       </div>
 
-      {h.members.length > 0 && (
+      {mode === 'plan' && h.members.length > 0 && (
         <footer className="hg-foot">
           {!h.ready ? (
             <p className="hg-hint">

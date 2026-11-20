@@ -43,6 +43,26 @@ def busy(person_id: int, start: datetime, end: datetime) -> list[tuple[datetime,
         return [(s, e) for s, e in cur.fetchall()]
 
 
+def busy_labels(person_id: int, start: datetime, end: datetime) -> list[str]:
+    """PRIVATE: calendar labels in [start, end). Only used by that person's own agent, to check it never says them."""
+    from src.db.s2_client import cursor
+    with cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT busy_label FROM availability WHERE person_id = %s AND ends_at > %s AND starts_at < %s",
+            (person_id, start, end))
+        return [r[0] for r in cur.fetchall() if r[0]]
+
+
+def group_by_name(name: str) -> dict:
+    from src.db.s2_client import cursor
+    with cursor() as cur:
+        cur.execute("SELECT id FROM groups_ WHERE LOWER(name) = LOWER(%s)", (name,))
+        row = cur.fetchone()
+    if not row:
+        raise ValueError(f"no group called {name!r}")
+    return group(row[0])
+
+
 def group(group_id: int) -> dict:
     from src.db.s2_client import cursor
     with cursor() as cur:
@@ -88,12 +108,13 @@ def real_cost_per_person(group_id: int) -> dict[str, Decimal]:
     """Learn step: what this group actually spent per person, per venue kind, at past confirmed meetups."""
     from src.db.s2_client import cursor
     with cursor() as cur:
+        # SingleStore rejects a correlated scalar subquery here, so the group size is joined in as a derived table.
         cur.execute(
-            "SELECT v.kind, SUM(e.amount) AS spent, COUNT(DISTINCT m.id) AS n_meetups,"
-            " (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = m.group_id) AS size"
+            "SELECT v.kind, SUM(e.amount) AS spent, COUNT(DISTINCT m.id) AS n_meetups, gs.size"
             " FROM expenses e JOIN meetups m ON m.id = e.meetup_id JOIN venues v ON v.id = m.venue_id"
+            " JOIN (SELECT group_id, COUNT(*) AS size FROM group_members GROUP BY group_id) gs ON gs.group_id = m.group_id"
             " WHERE m.group_id = %s AND m.status = 'confirmed' AND e.category <> 'settlement'"
-            " GROUP BY v.kind, size", (group_id,))
+            " GROUP BY v.kind, gs.size", (group_id,))
         out = {}
         for kind, spent, n, size in cur.fetchall():
             if n and size:

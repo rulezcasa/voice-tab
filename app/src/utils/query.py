@@ -17,6 +17,14 @@ _FORBIDDEN = re.compile(
 )
 
 
+# Private to each person's own agent (src/agents/personal.py). The agent's SQL may never read them, by name or
+# through SELECT *: queries naming them are refused, and they are dropped from every result as a second line.
+PRIVATE_TABLES = ("availability",)
+PRIVATE_COLUMNS = ("busy_label", "home_lat", "home_lng", "meetup_budget", "max_radius_mi", "max_travel_min",
+                   "travel_mode", "interests")
+_PRIVATE = re.compile(rf"\b({'|'.join(PRIVATE_TABLES + PRIVATE_COLUMNS)})\b", re.I)
+
+
 def rows_as_dicts(cur, json_cols: tuple[str, ...] = ()) -> list[dict]:
     """Fetch all rows as dicts; parse the named JSON columns if they came back as strings."""
     names = [d[0] for d in cur.description]
@@ -47,6 +55,9 @@ def check(sql: str) -> str:
     bad = _FORBIDDEN.search(bare)
     if bad:
         raise QueryError(f"'{bad.group(0)}' is not allowed in a read-only query")
+    private = _PRIVATE.search(bare)
+    if private:
+        raise QueryError(f"'{private.group(0)}' is private to each person's own agent and can't be queried")
     return sql
 
 
@@ -91,7 +102,8 @@ def run(sql: str, search: str | None = None) -> dict:
             rows = cur.fetchmany(MAX_ROWS + 1)
     except Exception as e:
         raise QueryError(f"{type(e).__name__}: {e}") from e
-    keep = [i for i, c in enumerate(cols) if c.lower() != "embedding"]
+    hidden = {"embedding", *PRIVATE_COLUMNS}
+    keep = [i for i, c in enumerate(cols) if c.lower() not in hidden]
     return {
         "columns": [cols[i] for i in keep],
         "rows": [[_plain(r[i]) for i in keep] for r in rows[:MAX_ROWS]],

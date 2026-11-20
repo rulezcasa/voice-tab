@@ -58,6 +58,7 @@ export interface HangoutMember {
   minutes: number // how far they'll travel
   mode: TravelMode
   location: LngLat | null
+  approx?: boolean // shown at the ~1 km area their agent shares (ask-the-agents mode): exact home stays private
 }
 
 /** What the UI sends to the recommender. */
@@ -84,4 +85,5 @@ export interface HangoutPlace {
 export interface HangoutResult {
   meeting_point: LngLat
   places: HangoutPlace[]
+  agreed?: boolean // the friends' agents settled on this one place
 }
