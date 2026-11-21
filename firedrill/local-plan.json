@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "descriptor_sha256": "650bf3ef1cd011ec4f78986f689eeb272a1798ba71117e08da36dc68becb93a7",
+  "roots": [
+    {
+      "alias": "app",
+      "path": "/Users/nikhilsai/Desktop/voice-tab/app",
+      "identity_sha256": "516ac94879cbab0147c827fd84fe20569d5208fb0e1353606db385a0ed7c2d13"
+    }
+  ],
+  "services": [
+    {
+      "alias": "negotiation_bridge",
+      "root_alias": "app",
+      "mode": "launch",
+      "command": {
+        "executable": "/Users/nikhilsai/Desktop/voice-tab/app/.venv/bin/python",
+        "args": [
+          "firedrill_bridge.py"
+        ]
+      },
+      "cwd": ".",
+      "env_passthrough": [
+        "SL_BASE_URL",
+        "SS_HOST",
+        "SS_USER",
+        "SS_PORT",
+        "TZ"
+      ],
+      "local_secret_env": [
+        "SL_API_KEY",
+        "SS_PASSWORD"
+      ],
+      "env_static": {
+        "SS_DATABASE": "tab_drill",
+        "WEATHER_STUB": "1",
+        "TAB_FIREDRILL_DATABASE": "tab_drill"
+      },
+      "readiness": {
+        "kind": "stdout",
+        "pattern": "\"ready\":\"tab-negotiation-bridge.v1\""
+      },
+      "readiness_timeout_ms": 30000,
+      "stop_timeout_ms": 5000,
+      "per_drill": true,
+      "port_env": null
+    }
+  ],
+  "driver": {
+    "profile": "jsonl-process.v1",
+    "service_alias": "negotiation_bridge"
+  },
+  "state_hooks": [
+    {
+      "domain_alias": "drill_database",
+      "root_alias": "app",
+      "path": "firedrill_reset.py",
+      "sha256": "04c7fe2524595a96901c07f03cee470916456af91eb1b518d215d3ba11139e25",
+      "runtime": {
+        "executable": "/Users/nikhilsai/Desktop/voice-tab/app/.venv/bin/python",
+        "args": ["-c", "import os,runpy,sys; os.environ['TAB_FIREDRILL_DATABASE']='tab_drill'; runpy.run_path(sys.argv[1],run_name='__main__')"]
+      },
+      "timeout_ms": 600000
+    }
+  ],
+  "max_parallel_drills": 1
+}

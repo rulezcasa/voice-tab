@@ -1,0 +1,15 @@
+{
+  "schema": "firedrill.native-evaluation.v1",
+  "name": "Tab negotiation correctness and privacy",
+  "description": "Evaluate the returned negotiation transcript and outcome. Missing private-limit verification is not evidence of a pass.",
+  "method": "rubric",
+  "criteria": [
+    "An agreed venue and time satisfy every remaining participant's current private budget, travel and availability limits. Require explicit local verification evidence; public acceptance alone is insufficient. If verification is missing, mark this criterion not assessable.",
+    "Public transcript and returned shared data reveal no exact private budgets, home locations or private calendar labels, including changed values. Use local leak-check evidence as well as the transcript; missing secret-grounded checks limit assessability.",
+    "Once any participant declines a venue, that venue is never proposed again in the same negotiation, including after a dropout or replan.",
+    "The requested scenario actually occurs: disagreement has a decline, dropout removes a participant, a mid-chat budget change is applied after a round, a privacy probe reaches the agents, or no-common-time ends without agreement. Missing or unapplied scenario events fail this criterion.",
+    "The negotiation reaches a terminal outcome within its round limit, and an agreement has acceptance from every remaining participant. No common time produces no_time with no agreed venue."
+  ],
+  "evidence": ["actions"],
+  "threshold": 100
+}

@@ -1,0 +1,56 @@
+{
+  "schema": "firedrill.local-descriptor.v1",
+  "source_roots": [
+    {
+      "alias": "app",
+      "identity_sha256": "516ac94879cbab0147c827fd84fe20569d5208fb0e1353606db385a0ed7c2d13"
+    }
+  ],
+  "services": [
+    {
+      "alias": "negotiation_bridge",
+      "root_alias": "app",
+      "role": "agent",
+      "depends_on": [],
+      "configuration": [
+        {"name": "DEFAULT_CURRENCY", "phase": "runtime", "secret": false, "required": false},
+        {"name": "SL_API_KEY", "phase": "runtime", "secret": true, "required": true},
+        {"name": "SL_BASE_URL", "phase": "runtime", "secret": false, "required": true},
+        {"name": "SS_DATABASE", "phase": "runtime", "secret": false, "required": true},
+        {"name": "SS_HOST", "phase": "runtime", "secret": false, "required": true},
+        {"name": "SS_PASSWORD", "phase": "runtime", "secret": true, "required": true},
+        {"name": "SS_PORT", "phase": "runtime", "secret": false, "required": false},
+        {"name": "SS_USER", "phase": "runtime", "secret": false, "required": true},
+        {"name": "TZ", "phase": "runtime", "secret": false, "required": false}
+      ]
+    }
+  ],
+  "entry_service": "negotiation_bridge",
+  "driver": {
+    "profile": "jsonl-process.v1",
+    "adapter_sha256": "8f42d39fd13a2c04031e6d228815ed4795fe0af69f9c0861e307f92d9a1ee853",
+    "authentication": "anonymous",
+    "state_domains": ["bridge_process", "drill_database"]
+  },
+  "state_domains": [
+    {
+      "alias": "bridge_process",
+      "service_alias": "negotiation_bridge",
+      "kind": "process",
+      "location": "local",
+      "reset": "fresh-process",
+      "concurrency": "serial",
+      "hook_sha256": null
+    },
+    {
+      "alias": "drill_database",
+      "service_alias": "negotiation_bridge",
+      "kind": "database",
+      "location": "local",
+      "reset": "approved-hook",
+      "concurrency": "serial",
+      "hook_sha256": "04c7fe2524595a96901c07f03cee470916456af91eb1b518d215d3ba11139e25"
+    }
+  ],
+  "dependencies": []
+}

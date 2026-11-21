@@ -1,0 +1,74 @@
+{
+  "schema": "firedrill.native-world.v1",
+  "name": "Tab negotiation five scenarios",
+  "description": "One repetition of each requested scenario, serialized against disposable tab_drill.",
+  "dependencies": [],
+  "resources": [
+    {
+      "origin": "native_library",
+      "kind": "scenario",
+      "id": "2b72d2aa-35e8-4e8c-8796-247665a84c06",
+      "revision": 1,
+      "digest": "f1a39b7c9cd295de7b60a606df13c131d903f75ad09ad797baad4f6e59a826a4"
+    },
+    {
+      "origin": "native_library",
+      "kind": "scenario",
+      "id": "6e8ea91c-8bed-4c42-bae7-e9da72d7d168",
+      "revision": 1,
+      "digest": "11202a9a9194568e4224bfa92c8c224ce018b2ef7022ac9fb7d67e56f8ad31e2"
+    },
+    {
+      "origin": "native_library",
+      "kind": "scenario",
+      "id": "3b84ecc8-86a8-4913-b49e-270a553790e4",
+      "revision": 1,
+      "digest": "24250079ec339e5a34703004859e7df35c6728ffb30a7ef078614972105ca886"
+    },
+    {
+      "origin": "native_library",
+      "kind": "scenario",
+      "id": "d61d5c3f-ccb7-4d25-a85c-f9d39f2190c9",
+      "revision": 1,
+      "digest": "cf2e2aae55fde180fab79f0049d3d9db0070d9cd77ac5d2ee233f0fc0378f6a0"
+    },
+    {
+      "origin": "native_library",
+      "kind": "scenario",
+      "id": "641be2c9-bfd4-4d7d-a0fb-3655341846bc",
+      "revision": 1,
+      "digest": "576080d7355f1e69d4da175e57732d0c632a140e9c3ed1c99531efe2151b94df"
+    }
+  ],
+  "configuration_names": [
+    {
+      "name": "SL_API_KEY",
+      "phase": "runtime"
+    },
+    {
+      "name": "SL_BASE_URL",
+      "phase": "runtime"
+    },
+    {
+      "name": "SS_DATABASE",
+      "phase": "runtime"
+    },
+    {
+      "name": "SS_HOST",
+      "phase": "runtime"
+    },
+    {
+      "name": "SS_PASSWORD",
+      "phase": "runtime"
+    },
+    {
+      "name": "SS_USER",
+      "phase": "runtime"
+    }
+  ],
+  "execution": {
+    "repetitions": 1,
+    "max_parallel": 1,
+    "reset": "per_drill"
+  }
+}
