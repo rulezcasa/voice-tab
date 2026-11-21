@@ -245,7 +245,8 @@ export function MapView({ hangout, panelOpen }: { hangout: Hangout; panelOpen: b
         node.innerHTML = '<span class="pin-fig"></span><span class="pin-mode"></span><span class="pin-name"></span>'
         node.style.setProperty('--d', `${(-Math.random() * 3).toFixed(2)}s`) // so pins don't bob in sync
         // anchored at the feet, so the figure stands on the spot
-        mk = new Marker({ element: node, draggable: true, anchor: 'bottom' }).setLngLat(p.location).addTo(m)
+        // approximate (agents mode) pins can't be dragged: their spot is the shared ~1 km area, not a choice
+        mk = new Marker({ element: node, draggable: !p.approx, anchor: 'bottom' }).setLngLat(p.location).addTo(m)
         const id = p.person_id
         const marker = mk
         marker.on('dragstart', () => node.classList.add('lifted'))
@@ -268,8 +269,10 @@ export function MapView({ hangout, panelOpen }: { hangout: Hangout; panelOpen: b
       node.style.setProperty('--c', h.current.colorOf(p.person_id))
       node.querySelector('.pin-fig')!.textContent = figureOf(p.person_id, p.is_me)
       node.querySelector('.pin-mode')!.textContent = MODE_EMOJI[p.mode]
-      node.querySelector('.pin-name')!.textContent = p.is_me ? 'you' : p.name.split(' ')[0]
+      node.querySelector('.pin-name')!.textContent = `${p.approx ? '~' : ''}${p.is_me ? 'you' : p.name.split(' ')[0]}`
       node.classList.toggle('me', p.is_me)
+      node.classList.toggle('approx', !!p.approx)
+      mk.setDraggable(!p.approx)
       mk.setLngLat(p.location)
     }
     for (const [id, mk] of people.current) {
@@ -281,7 +284,7 @@ export function MapView({ hangout, panelOpen }: { hangout: Hangout; panelOpen: b
 
     // reach circles grow out from the pin (or to their new size) with a little spring
     targets.current = going
-      .filter((p) => p.location)
+      .filter((p) => p.location && !p.approx) // no reach circle when travel limits are private
       .map((p) => ({ id: p.person_id, at: p.location!, r: reachMetres(p.minutes, p.mode), color: h.current.colorOf(p.person_id) }))
     for (const id of radii.current.keys()) if (!seen.has(id)) radii.current.delete(id)
     const from = new Map(radii.current)
@@ -302,6 +305,17 @@ export function MapView({ hangout, panelOpen }: { hangout: Hangout; panelOpen: b
     return () => cancelAnimationFrame(reachRaf.current)
   }, [going, members, loaded])
 
+  // ---- agents mode: frame everyone's rough area as soon as a game starts (before there's a place) ----
+  const approxKey = going.filter((p) => p.approx && p.location).map((p) => `${p.person_id}:${p.location}`).join('|')
+  useEffect(() => {
+    const m = map.current
+    if (!m || !loaded || !approxKey || result) return
+    const b = new LngLatBounds()
+    going.forEach((p) => p.approx && p.location && b.extend(p.location))
+    m.fitBounds(b, { padding: padding(panel.current), maxZoom: 14.5, pitch: 50, duration: reduced() ? 0 : 1400 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approxKey, loaded])
+
   // ---- results: the middle, numbered places, and lines from everyone to the focus ----
   useEffect(() => {
     const m = map.current
@@ -317,16 +331,18 @@ export function MapView({ hangout, panelOpen }: { hangout: Hangout; panelOpen: b
       return
     }
 
-    const mid = document.createElement('div')
-    mid.className = 'mid'
-    mid.innerHTML = '<i></i><span>middle</span>'
-    middle.current = new Marker({ element: mid }).setLngLat(result.meeting_point).addTo(m)
+    if (!result.agreed) {   // an agreed plan is just the place: no "middle" marker on top of it
+      const mid = document.createElement('div')
+      mid.className = 'mid'
+      mid.innerHTML = '<i></i><span>middle</span>'
+      middle.current = new Marker({ element: mid }).setLngLat(result.meeting_point).addTo(m)
+    }
 
     result.places.forEach((pl, i) => {
       const node = document.createElement('button')
       node.className = 'poi'
       node.style.setProperty('--i', String(i)) // staggered pop-in
-      node.innerHTML = `<i><b>${KIND_EMOJI[pl.kind]}</b></i><em>${i + 1}</em><span></span>`
+      node.innerHTML = `<i><b>${KIND_EMOJI[pl.kind]}</b></i><em>${result.agreed ? '✓' : i + 1}</em><span></span>`
       node.querySelector('span')!.textContent = pl.name
       node.setAttribute('aria-label', pl.name)
       node.addEventListener('click', (e) => {
@@ -339,7 +355,11 @@ export function MapView({ hangout, panelOpen }: { hangout: Hangout; panelOpen: b
     // frame everyone and every suggestion
     const b = new LngLatBounds()
     // whole reach circles, not just the pins, so nobody's circle is cut off
-    h.current.going.forEach((p) => p.location && circle(p.location, reachMetres(p.minutes, p.mode), 16).forEach((pt) => b.extend(pt)))
+    h.current.going.forEach((p) => {
+      if (!p.location) return
+      if (p.approx) b.extend(p.location)
+      else circle(p.location, reachMetres(p.minutes, p.mode), 16).forEach((pt) => b.extend(pt))
+    })
     result.places.forEach((pl) => b.extend(pl.location))
     b.extend(result.meeting_point)
     // take only the zoom from cameraForBounds; pass the real centre plus padding to the flight,
